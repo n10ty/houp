@@ -39,6 +39,10 @@ func TestGenerateDateTime(t *testing.T) {
 	testGenerate(t, "datetime", "datetime.go")
 }
 
+func TestGenerateUUID(t *testing.T) {
+	testGenerate(t, "uuid", "uuid.go")
+}
+
 func testGenerate(t *testing.T, testDir, inputFile string) {
 	t.Helper()
 

@@ -111,6 +111,8 @@ if err := user.Validate(); err != nil {
 | `lt=N` | Less than (exclusive) | Numbers | `validate:"lt=100"` |
 | `gte=N` | Greater than or equal | Numbers | `validate:"gte=0"` |
 | `lte=N` | Less than or equal | Numbers | `validate:"lte=100"` |
+| `uuid` | Valid UUID (v1-v5) format | Strings | `validate:"uuid"` |
+| `datetime=format` | Valid datetime in Go format | Strings | `validate:"datetime=2006-01-02"` |
 | `regexp=pkg:Var` | Match imported regexp | Strings | `validate:"regexp=github.com/x/y:Pattern"` |
 | `unique` | Values must be unique | Slices | `validate:"unique"` |
 | `unique=Field` | Field values must be unique (field must be string) | Slices of structs | `validate:"unique=Email"` |
@@ -266,6 +268,78 @@ func (c *Contact) Validate() error {
     // ...
 }
 ```
+
+### UUID Validation
+
+Validate UUID (v1-v5) format:
+
+```go
+type Resource struct {
+    ID          string  `validate:"required,uuid"`
+    OwnerID     string  `validate:"uuid"`
+    OptionalID  *string `validate:"omitempty,uuid"`
+}
+```
+
+**Generated code:**
+
+```go
+import (
+    "fmt"
+    "regexp"
+)
+
+func (r *Resource) Validate() error {
+    if r.ID == "" {
+        return fmt.Errorf("field ID is required")
+    }
+    uuidRegexp1 := regexp.MustCompile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+    if !uuidRegexp1.MatchString(r.ID) {
+        return fmt.Errorf("field ID must be a valid UUID")
+    }
+    // ...
+}
+```
+
+Valid UUIDs: `123e4567-e89b-12d3-a456-426614174000`, `550e8400-e29b-41d4-a716-446655440000`
+
+### DateTime Validation
+
+Validate datetime strings using Go time formats:
+
+```go
+type Event struct {
+    StartTime string  `validate:"required,datetime=2006-01-02T15:04:05Z07:00"`
+    EndTime   string  `validate:"datetime=2006-01-02T15:04:05Z07:00"`
+    CreatedAt string  `validate:"datetime=2006-01-02"`
+    UpdatedAt *string `validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
+}
+```
+
+**Generated code:**
+
+```go
+import (
+    "fmt"
+    "time"
+)
+
+func (e *Event) Validate() error {
+    if e.StartTime == "" {
+        return fmt.Errorf("field StartTime is required")
+    }
+    if _, err := time.Parse("2006-01-02T15:04:05Z07:00", e.StartTime); err != nil {
+        return fmt.Errorf("field StartTime must be a valid datetime in format 2006-01-02T15:04:05Z07:00: %w", err)
+    }
+    // ...
+}
+```
+
+Common formats:
+- RFC3339: `2006-01-02T15:04:05Z07:00`
+- Date only: `2006-01-02`
+- Time only: `15:04:05`
+- Custom: `01/02/2006`
 
 ### Custom Validators
 

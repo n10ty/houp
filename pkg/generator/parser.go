@@ -228,6 +228,8 @@ func parseValidationRule(ruleStr string) (ValidationRule, error) {
 			return nil, fmt.Errorf("datetime rule requires a format parameter")
 		}
 		return &DateTimeRule{Format: param}, nil
+	case "uuid":
+		return &UUIDRule{}, nil
 	default:
 		// Check if it's a custom validator (contains ':')
 		if strings.Contains(ruleStr, ":") {

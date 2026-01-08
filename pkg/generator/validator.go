@@ -673,6 +673,61 @@ func (r *CustomRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, er
 	}`, alias, r.FuncName, receiverVar, field.Name, field.Name), nil
 }
 
+// UUIDRule validates that a string field is a valid UUID
+type UUIDRule struct{}
+
+func (r *UUIDRule) Name() string { return "uuid" }
+
+func (r *UUIDRule) Validate(fieldType TypeInfo) error {
+	// Handle pointer to string
+	if fieldType.IsPointer && fieldType.Elem != nil && fieldType.Elem.Kind == TypeString {
+		return nil
+	}
+
+	if fieldType.Kind != TypeString {
+		return fmt.Errorf("uuid validation only applicable to string types")
+	}
+	return nil
+}
+
+func (r *UUIDRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
+
+	// Skip non-string types
+	if typeInfo.Kind != TypeString {
+		if typeInfo.IsPointer && typeInfo.Elem != nil && typeInfo.Elem.Kind != TypeString {
+			return "", fmt.Errorf("uuid validation only applicable to string types")
+		}
+		if !typeInfo.IsPointer {
+			return "", fmt.Errorf("uuid validation only applicable to string types")
+		}
+	}
+
+	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
+
+	// Add regexp package import
+	ctx.AddImport("regexp", "regexp")
+
+	fieldRef := fmt.Sprintf("%s.%s", receiverVar, field.Name)
+
+	// UUID regex pattern (matches UUID v1-v5)
+	uuidPattern := `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`
+
+	if typeInfo.IsPointer {
+		// For pointer to string, dereference
+		fieldRef = fmt.Sprintf("*%s", fieldRef)
+	}
+
+	// Use unique variable name to avoid redeclaration
+	ctx.VarCounter++
+	regexpVar := fmt.Sprintf("uuidRegexp%d", ctx.VarCounter)
+
+	return fmt.Sprintf(`	%s := regexp.MustCompile(%q)
+	if !%s.MatchString(%s) {
+		return fmt.Errorf("field %s must be a valid UUID")
+	}`, regexpVar, uuidPattern, regexpVar, fieldRef, field.Name), nil
+}
+
 // DateTimeRule validates that a string field matches a Go time format
 type DateTimeRule struct {
 	Format string
