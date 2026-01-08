@@ -320,13 +320,23 @@ func ResolveTypeInfo(expr ast.Expr, typesInfo *types.Info) TypeInfo {
 		if pkgIdent, ok := t.X.(*ast.Ident); ok {
 			typeInfo.PkgName = pkgIdent.Name
 			typeInfo.Name = t.Sel.Name
-			typeInfo.Kind = TypeStruct // Assume struct for now
+
+			// Check if this is json.Number
+			if typeInfo.PkgName == "json" && typeInfo.Name == "Number" {
+				typeInfo.Kind = TypeJSONNumber
+			} else {
+				typeInfo.Kind = TypeStruct // Assume struct for now
+			}
 
 			// Try to get import path from types.Info
 			if typesInfo != nil {
 				if obj := typesInfo.Uses[pkgIdent]; obj != nil {
 					if pkgName, ok := obj.(*types.PkgName); ok {
 						typeInfo.PkgPath = pkgName.Imported().Path()
+						// Double-check if it's json.Number via import path
+						if typeInfo.PkgPath == "encoding/json" && typeInfo.Name == "Number" {
+							typeInfo.Kind = TypeJSONNumber
+						}
 					}
 				}
 			}

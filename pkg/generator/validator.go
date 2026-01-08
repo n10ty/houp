@@ -130,6 +130,22 @@ func (r *MinRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error
 		return fmt.Errorf("field %s must be at least %s")
 	}`, fieldRef, r.Value, field.Name, r.Value), nil
 
+	case TypeJSONNumber:
+		// For json.Number, convert to float64 and compare
+		if needsDeref {
+			fieldRef = fmt.Sprintf("*%s.%s", receiverVar, field.Name)
+		}
+		// Use unique variable name to avoid redeclaration
+		ctx.VarCounter++
+		varName := fmt.Sprintf("%sFloat%d", field.Name, ctx.VarCounter)
+		return fmt.Sprintf(`	%s, err := %s.Float64()
+	if err != nil {
+		return fmt.Errorf("field %s must be a valid number: %%w", err)
+	}
+	if %s < %s {
+		return fmt.Errorf("field %s must be at least %s")
+	}`, varName, fieldRef, field.Name, varName, r.Value, field.Name, r.Value), nil
+
 	default:
 		return "", fmt.Errorf("min validation not supported for type %s", typeInfo.Name)
 	}
@@ -189,6 +205,22 @@ func (r *MaxRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error
 		return fmt.Errorf("field %s must be at most %s")
 	}`, fieldRef, r.Value, field.Name, r.Value), nil
 
+	case TypeJSONNumber:
+		// For json.Number, convert to float64 and compare
+		if needsDeref {
+			fieldRef = fmt.Sprintf("*%s.%s", receiverVar, field.Name)
+		}
+		// Use unique variable name to avoid redeclaration
+		ctx.VarCounter++
+		varName := fmt.Sprintf("%sFloat%d", field.Name, ctx.VarCounter)
+		return fmt.Sprintf(`	%s, err := %s.Float64()
+	if err != nil {
+		return fmt.Errorf("field %s must be a valid number: %%w", err)
+	}
+	if %s > %s {
+		return fmt.Errorf("field %s must be at most %s")
+	}`, varName, fieldRef, field.Name, varName, r.Value, field.Name, r.Value), nil
+
 	default:
 		return "", fmt.Errorf("max validation not supported for type %s", typeInfo.Name)
 	}
@@ -215,7 +247,35 @@ func (r *GTRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error)
 	// Handle pointer types
 	fieldRef := fmt.Sprintf("%s.%s", receiverVar, field.Name)
 	if typeInfo.IsPointer {
+		if typeInfo.Elem != nil && typeInfo.Elem.Kind == TypeJSONNumber {
+			// Pointer to json.Number
+			fieldRef = fmt.Sprintf("(*%s.%s)", receiverVar, field.Name)
+			// Use unique variable name to avoid redeclaration
+			ctx.VarCounter++
+			varName := fmt.Sprintf("%sFloat%d", field.Name, ctx.VarCounter)
+			return fmt.Sprintf(`	%s, err := %s.Float64()
+	if err != nil {
+		return fmt.Errorf("field %s must be a valid number: %%w", err)
+	}
+	if %s <= %s {
+		return fmt.Errorf("field %s must be greater than %s")
+	}`, varName, fieldRef, field.Name, varName, r.Value, field.Name, r.Value), nil
+		}
 		fieldRef = fmt.Sprintf("*%s", fieldRef)
+	}
+
+	// Handle json.Number
+	if typeInfo.Kind == TypeJSONNumber {
+		// Use unique variable name to avoid redeclaration
+		ctx.VarCounter++
+		varName := fmt.Sprintf("%sFloat%d", field.Name, ctx.VarCounter)
+		return fmt.Sprintf(`	%s, err := %s.Float64()
+	if err != nil {
+		return fmt.Errorf("field %s must be a valid number: %%w", err)
+	}
+	if %s <= %s {
+		return fmt.Errorf("field %s must be greater than %s")
+	}`, varName, fieldRef, field.Name, varName, r.Value, field.Name, r.Value), nil
 	}
 
 	return fmt.Sprintf(`	if %s <= %s {
@@ -244,7 +304,35 @@ func (r *LTRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error)
 	// Handle pointer types
 	fieldRef := fmt.Sprintf("%s.%s", receiverVar, field.Name)
 	if typeInfo.IsPointer {
+		if typeInfo.Elem != nil && typeInfo.Elem.Kind == TypeJSONNumber {
+			// Pointer to json.Number
+			fieldRef = fmt.Sprintf("(*%s.%s)", receiverVar, field.Name)
+			// Use unique variable name to avoid redeclaration
+			ctx.VarCounter++
+			varName := fmt.Sprintf("%sFloat%d", field.Name, ctx.VarCounter)
+			return fmt.Sprintf(`	%s, err := %s.Float64()
+	if err != nil {
+		return fmt.Errorf("field %s must be a valid number: %%w", err)
+	}
+	if %s >= %s {
+		return fmt.Errorf("field %s must be less than %s")
+	}`, varName, fieldRef, field.Name, varName, r.Value, field.Name, r.Value), nil
+		}
 		fieldRef = fmt.Sprintf("*%s", fieldRef)
+	}
+
+	// Handle json.Number
+	if typeInfo.Kind == TypeJSONNumber {
+		// Use unique variable name to avoid redeclaration
+		ctx.VarCounter++
+		varName := fmt.Sprintf("%sFloat%d", field.Name, ctx.VarCounter)
+		return fmt.Sprintf(`	%s, err := %s.Float64()
+	if err != nil {
+		return fmt.Errorf("field %s must be a valid number: %%w", err)
+	}
+	if %s >= %s {
+		return fmt.Errorf("field %s must be less than %s")
+	}`, varName, fieldRef, field.Name, varName, r.Value, field.Name, r.Value), nil
 	}
 
 	return fmt.Sprintf(`	if %s >= %s {
@@ -273,7 +361,35 @@ func (r *GTERule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error
 	// Handle pointer types
 	fieldRef := fmt.Sprintf("%s.%s", receiverVar, field.Name)
 	if typeInfo.IsPointer {
+		if typeInfo.Elem != nil && typeInfo.Elem.Kind == TypeJSONNumber {
+			// Pointer to json.Number
+			fieldRef = fmt.Sprintf("(*%s.%s)", receiverVar, field.Name)
+			// Use unique variable name to avoid redeclaration
+			ctx.VarCounter++
+			varName := fmt.Sprintf("%sFloat%d", field.Name, ctx.VarCounter)
+			return fmt.Sprintf(`	%s, err := %s.Float64()
+	if err != nil {
+		return fmt.Errorf("field %s must be a valid number: %%w", err)
+	}
+	if %s < %s {
+		return fmt.Errorf("field %s must be at least %s")
+	}`, varName, fieldRef, field.Name, varName, r.Value, field.Name, r.Value), nil
+		}
 		fieldRef = fmt.Sprintf("*%s", fieldRef)
+	}
+
+	// Handle json.Number
+	if typeInfo.Kind == TypeJSONNumber {
+		// Use unique variable name to avoid redeclaration
+		ctx.VarCounter++
+		varName := fmt.Sprintf("%sFloat%d", field.Name, ctx.VarCounter)
+		return fmt.Sprintf(`	%s, err := %s.Float64()
+	if err != nil {
+		return fmt.Errorf("field %s must be a valid number: %%w", err)
+	}
+	if %s < %s {
+		return fmt.Errorf("field %s must be at least %s")
+	}`, varName, fieldRef, field.Name, varName, r.Value, field.Name, r.Value), nil
 	}
 
 	return fmt.Sprintf(`	if %s < %s {
@@ -302,7 +418,35 @@ func (r *LTERule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error
 	// Handle pointer types
 	fieldRef := fmt.Sprintf("%s.%s", receiverVar, field.Name)
 	if typeInfo.IsPointer {
+		if typeInfo.Elem != nil && typeInfo.Elem.Kind == TypeJSONNumber {
+			// Pointer to json.Number
+			fieldRef = fmt.Sprintf("(*%s.%s)", receiverVar, field.Name)
+			// Use unique variable name to avoid redeclaration
+			ctx.VarCounter++
+			varName := fmt.Sprintf("%sFloat%d", field.Name, ctx.VarCounter)
+			return fmt.Sprintf(`	%s, err := %s.Float64()
+	if err != nil {
+		return fmt.Errorf("field %s must be a valid number: %%w", err)
+	}
+	if %s > %s {
+		return fmt.Errorf("field %s must be at most %s")
+	}`, varName, fieldRef, field.Name, varName, r.Value, field.Name, r.Value), nil
+		}
 		fieldRef = fmt.Sprintf("*%s", fieldRef)
+	}
+
+	// Handle json.Number
+	if typeInfo.Kind == TypeJSONNumber {
+		// Use unique variable name to avoid redeclaration
+		ctx.VarCounter++
+		varName := fmt.Sprintf("%sFloat%d", field.Name, ctx.VarCounter)
+		return fmt.Sprintf(`	%s, err := %s.Float64()
+	if err != nil {
+		return fmt.Errorf("field %s must be a valid number: %%w", err)
+	}
+	if %s > %s {
+		return fmt.Errorf("field %s must be at most %s")
+	}`, varName, fieldRef, field.Name, varName, r.Value, field.Name, r.Value), nil
 	}
 
 	return fmt.Sprintf(`	if %s > %s {

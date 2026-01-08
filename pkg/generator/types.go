@@ -105,6 +105,7 @@ const (
 	TypeFloat32
 	TypeFloat64
 	TypeString
+	TypeJSONNumber // encoding/json.Number
 	TypeSlice
 	TypeArray
 	TypeMap
@@ -115,7 +116,7 @@ const (
 
 // IsNumeric returns true if the type is a numeric type
 func (t TypeInfo) IsNumeric() bool {
-	return t.Kind >= TypeInt && t.Kind <= TypeFloat64
+	return (t.Kind >= TypeInt && t.Kind <= TypeFloat64) || t.Kind == TypeJSONNumber
 }
 
 // IsInteger returns true if the type is an integer type
