@@ -230,6 +230,8 @@ func parseValidationRule(ruleStr string) (ValidationRule, error) {
 		return &DateTimeRule{Format: param}, nil
 	case "uuid":
 		return &UUIDRule{}, nil
+	case "iso4217":
+		return &ISO4217Rule{}, nil
 	default:
 		// Check if it's a custom validator (contains ':')
 		if strings.Contains(ruleStr, ":") {

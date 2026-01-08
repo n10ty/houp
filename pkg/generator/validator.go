@@ -728,6 +728,92 @@ func (r *UUIDRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, erro
 	}`, regexpVar, uuidPattern, regexpVar, fieldRef, field.Name), nil
 }
 
+// ISO4217Rule validates that a string field is a valid ISO 4217 currency code
+type ISO4217Rule struct{}
+
+func (r *ISO4217Rule) Name() string { return "iso4217" }
+
+func (r *ISO4217Rule) Validate(fieldType TypeInfo) error {
+	// Handle pointer to string
+	if fieldType.IsPointer && fieldType.Elem != nil && fieldType.Elem.Kind == TypeString {
+		return nil
+	}
+
+	if fieldType.Kind != TypeString {
+		return fmt.Errorf("iso4217 validation only applicable to string types")
+	}
+	return nil
+}
+
+func (r *ISO4217Rule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
+
+	// Skip non-string types
+	if typeInfo.Kind != TypeString {
+		if typeInfo.IsPointer && typeInfo.Elem != nil && typeInfo.Elem.Kind != TypeString {
+			return "", fmt.Errorf("iso4217 validation only applicable to string types")
+		}
+		if !typeInfo.IsPointer {
+			return "", fmt.Errorf("iso4217 validation only applicable to string types")
+		}
+	}
+
+	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
+	fieldRef := fmt.Sprintf("%s.%s", receiverVar, field.Name)
+
+	if typeInfo.IsPointer {
+		// For pointer to string, dereference
+		fieldRef = fmt.Sprintf("*%s", fieldRef)
+	}
+
+	// Use unique variable name to avoid redeclaration
+	ctx.VarCounter++
+	mapVar := fmt.Sprintf("iso4217Codes%d", ctx.VarCounter)
+
+	// Generate the validation code with an inline map
+	return fmt.Sprintf(`	%s := map[string]struct{}{
+		"AFN": {}, "EUR": {}, "ALL": {}, "DZD": {}, "USD": {},
+		"AOA": {}, "XCD": {}, "ARS": {}, "AMD": {}, "AWG": {},
+		"AUD": {}, "AZN": {}, "BSD": {}, "BHD": {}, "BDT": {},
+		"BBD": {}, "BYN": {}, "BZD": {}, "XOF": {}, "BMD": {},
+		"INR": {}, "BTN": {}, "BOB": {}, "BOV": {}, "BAM": {},
+		"BWP": {}, "NOK": {}, "BRL": {}, "BND": {}, "BGN": {},
+		"BIF": {}, "CVE": {}, "KHR": {}, "XAF": {}, "CAD": {},
+		"KYD": {}, "CLP": {}, "CLF": {}, "CNY": {}, "COP": {},
+		"COU": {}, "KMF": {}, "CDF": {}, "NZD": {}, "CRC": {},
+		"CUP": {}, "CZK": {}, "DKK": {}, "DJF": {}, "DOP": {},
+		"EGP": {}, "SVC": {}, "ERN": {}, "SZL": {}, "ETB": {},
+		"FKP": {}, "FJD": {}, "XPF": {}, "GMD": {}, "GEL": {},
+		"GHS": {}, "GIP": {}, "GTQ": {}, "GBP": {}, "GNF": {},
+		"GYD": {}, "HTG": {}, "HNL": {}, "HKD": {}, "HUF": {},
+		"ISK": {}, "IDR": {}, "XDR": {}, "IRR": {}, "IQD": {},
+		"ILS": {}, "JMD": {}, "JPY": {}, "JOD": {}, "KZT": {},
+		"KES": {}, "KPW": {}, "KRW": {}, "KWD": {}, "KGS": {},
+		"LAK": {}, "LBP": {}, "LSL": {}, "ZAR": {}, "LRD": {},
+		"LYD": {}, "CHF": {}, "MOP": {}, "MKD": {}, "MGA": {},
+		"MWK": {}, "MYR": {}, "MVR": {}, "MRU": {}, "MUR": {},
+		"XUA": {}, "MXN": {}, "MXV": {}, "MDL": {}, "MNT": {},
+		"MAD": {}, "MZN": {}, "MMK": {}, "NAD": {}, "NPR": {},
+		"NIO": {}, "NGN": {}, "OMR": {}, "PKR": {}, "PAB": {},
+		"PGK": {}, "PYG": {}, "PEN": {}, "PHP": {}, "PLN": {},
+		"QAR": {}, "RON": {}, "RUB": {}, "RWF": {}, "SHP": {},
+		"WST": {}, "STN": {}, "SAR": {}, "RSD": {}, "SCR": {},
+		"SLE": {}, "SGD": {}, "XSU": {}, "SBD": {}, "SOS": {},
+		"SSP": {}, "LKR": {}, "SDG": {}, "SRD": {}, "SEK": {},
+		"CHE": {}, "CHW": {}, "SYP": {}, "TWD": {}, "TJS": {},
+		"TZS": {}, "THB": {}, "TOP": {}, "TTD": {}, "TND": {},
+		"TRY": {}, "TMT": {}, "UGX": {}, "UAH": {}, "AED": {},
+		"USN": {}, "UYU": {}, "UYI": {}, "UYW": {}, "UZS": {},
+		"VUV": {}, "VES": {}, "VED": {}, "VND": {}, "YER": {},
+		"ZMW": {}, "ZWG": {}, "XBA": {}, "XBB": {}, "XBC": {},
+		"XBD": {}, "XCG": {}, "XTS": {}, "XXX": {}, "XAU": {},
+		"XPD": {}, "XPT": {}, "XAG": {},
+	}
+	if _, ok := %s[%s]; !ok {
+		return fmt.Errorf("field %s must be a valid ISO 4217 currency code")
+	}`, mapVar, mapVar, fieldRef, field.Name), nil
+}
+
 // DateTimeRule validates that a string field matches a Go time format
 type DateTimeRule struct {
 	Format string

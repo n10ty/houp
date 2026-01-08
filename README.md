@@ -112,6 +112,7 @@ if err := user.Validate(); err != nil {
 | `gte=N` | Greater than or equal | Numbers | `validate:"gte=0"` |
 | `lte=N` | Less than or equal | Numbers | `validate:"lte=100"` |
 | `uuid` | Valid UUID (v1-v5) format | Strings | `validate:"uuid"` |
+| `iso4217` | Valid ISO 4217 currency code | Strings | `validate:"iso4217"` |
 | `datetime=format` | Valid datetime in Go format | Strings | `validate:"datetime=2006-01-02"` |
 | `regexp=pkg:Var` | Match imported regexp | Strings | `validate:"regexp=github.com/x/y:Pattern"` |
 | `unique` | Values must be unique | Slices | `validate:"unique"` |
@@ -302,6 +303,48 @@ func (r *Resource) Validate() error {
 ```
 
 Valid UUIDs: `123e4567-e89b-12d3-a456-426614174000`, `550e8400-e29b-41d4-a716-446655440000`
+
+### ISO 4217 Currency Code Validation
+
+Validate that a string field contains a valid ISO 4217 currency code:
+
+```go
+type Payment struct {
+    Currency       string  `validate:"required,iso4217"`
+    BaseCurrency   string  `validate:"iso4217"`
+    TargetCurrency *string `validate:"omitempty,iso4217"`
+    Amount         float64 `validate:"required,gt=0"`
+}
+```
+
+**Generated code:**
+
+```go
+import "fmt"
+
+func (p *Payment) Validate() error {
+    if p.Currency == "" {
+        return fmt.Errorf("field Currency is required")
+    }
+    iso4217Codes1 := map[string]struct{}{
+        "AFN": {}, "EUR": {}, "ALL": {}, "DZD": {}, "USD": {},
+        "AOA": {}, "XCD": {}, "ARS": {}, "AMD": {}, "AWG": {},
+        // ... (all 178 ISO 4217 currency codes)
+    }
+    if _, ok := iso4217Codes1[p.Currency]; !ok {
+        return fmt.Errorf("field Currency must be a valid ISO 4217 currency code")
+    }
+    // ...
+}
+```
+
+Valid currency codes include:
+- Major currencies: `USD`, `EUR`, `GBP`, `JPY`, `CHF`, `CAD`, `AUD`
+- Regional currencies: `XCD`, `XOF`, `XAF` (multi-country currencies)
+- Precious metals: `XAU` (Gold), `XAG` (Silver), `XPT` (Platinum), `XPD` (Palladium)
+- Special codes: `XXX` (No currency), `XTS` (Test currency)
+
+All codes must be uppercase and exactly 3 characters.
 
 ### DateTime Validation
 
