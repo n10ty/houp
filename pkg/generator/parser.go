@@ -232,6 +232,10 @@ func parseValidationRule(ruleStr string) (ValidationRule, error) {
 		return &UUIDRule{}, nil
 	case "iso4217":
 		return &ISO4217Rule{}, nil
+	case "email":
+		return &EmailRule{}, nil
+	case "iso3166_1_alpha2":
+		return &ISO3166_1_Alpha2Rule{}, nil
 	default:
 		// Check if it's a custom validator (contains ':')
 		if strings.Contains(ruleStr, ":") {
