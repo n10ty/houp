@@ -57,7 +57,7 @@ func Generate(pkgPath string, opts *GenerateOptions) error {
 		}
 
 		// Generate validation code
-		code, err := GenerateFileValidation(fileInfo, pkgInfo.Name, opts)
+		code, err := GenerateFileValidation(fileInfo, pkgInfo.Name, opts, pkgInfo.TypesInfo)
 		if err != nil {
 			return fmt.Errorf("failed to generate validation for file %s (package %s): %w", fileInfo.Name, pkgInfo.Name, err)
 		}
@@ -138,7 +138,7 @@ func GenerateForFiles(files []string, opts *GenerateOptions) error {
 		pkgName := fileInfo.AST.Name.Name
 
 		// Generate validation code
-		code, err := GenerateFileValidation(fileInfo, pkgName, opts)
+		code, err := GenerateFileValidation(fileInfo, pkgName, opts, nil)
 		if err != nil {
 			return fmt.Errorf("failed to generate validation for file %s (package %s): %w", filePath, pkgName, err)
 		}

@@ -2,6 +2,7 @@ package generator
 
 import (
 	"fmt"
+	"go/types"
 	"strconv"
 	"strings"
 )
@@ -17,7 +18,7 @@ func (r *RequiredRule) Validate(fieldType TypeInfo) error {
 }
 
 func (r *RequiredRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
 
 	// Generate appropriate check based on type
@@ -90,7 +91,7 @@ func (r *MinRule) Validate(fieldType TypeInfo) error {
 }
 
 func (r *MinRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
 
 	// Track if we need to dereference
@@ -149,7 +150,7 @@ func (r *MaxRule) Validate(fieldType TypeInfo) error {
 }
 
 func (r *MaxRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
 
 	// Track if we need to dereference
@@ -208,7 +209,7 @@ func (r *GTRule) Validate(fieldType TypeInfo) error {
 }
 
 func (r *GTRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
 
 	// Handle pointer types
@@ -237,7 +238,7 @@ func (r *LTRule) Validate(fieldType TypeInfo) error {
 }
 
 func (r *LTRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
 
 	// Handle pointer types
@@ -266,7 +267,7 @@ func (r *GTERule) Validate(fieldType TypeInfo) error {
 }
 
 func (r *GTERule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
 
 	// Handle pointer types
@@ -295,7 +296,7 @@ func (r *LTERule) Validate(fieldType TypeInfo) error {
 }
 
 func (r *LTERule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
 
 	// Handle pointer types
@@ -331,7 +332,7 @@ func (r *RegexpRule) Validate(fieldType TypeInfo) error {
 }
 
 func (r *RegexpRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 
 	// Skip non-string types
 	if typeInfo.Kind != TypeString {
@@ -378,7 +379,7 @@ func (r *UniqueRule) Validate(fieldType TypeInfo) error {
 }
 
 func (r *UniqueRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 
 	// Skip non-slice types
 	if !typeInfo.IsSlice {
@@ -458,7 +459,7 @@ func (r *DiveRule) Validate(fieldType TypeInfo) error {
 }
 
 func (r *DiveRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
 
 	if typeInfo.IsSlice {
@@ -548,7 +549,7 @@ func (r *DateTimeRule) Validate(fieldType TypeInfo) error {
 }
 
 func (r *DateTimeRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 
 	// Skip non-string types
 	if typeInfo.Kind != TypeString {
@@ -568,8 +569,24 @@ func (r *DateTimeRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, 
 	fieldRef := fmt.Sprintf("%s.%s", receiverVar, field.Name)
 
 	if typeInfo.IsPointer {
-		// For pointer to string, dereference
-		fieldRef = fmt.Sprintf("*%s", fieldRef)
+		// For pointer to string or custom string type
+		if typeInfo.Elem != nil {
+			// Check if the element is a custom string type
+			elemNeedsCast := typeInfo.Elem.Name != "" && typeInfo.Elem.Name != "string"
+			if elemNeedsCast {
+				fieldRef = fmt.Sprintf("string(*%s)", fieldRef)
+			} else {
+				fieldRef = fmt.Sprintf("*%s", fieldRef)
+			}
+		} else {
+			fieldRef = fmt.Sprintf("*%s", fieldRef)
+		}
+	} else {
+		// For non-pointer types, check if it's a custom string type
+		needsCast := typeInfo.Name != "" && typeInfo.Name != "string"
+		if needsCast {
+			fieldRef = fmt.Sprintf("string(%s)", fieldRef)
+		}
 	}
 
 	return fmt.Sprintf(`	if _, err := time.Parse("%s", %s); err != nil {
@@ -593,8 +610,8 @@ func (r *UnknownRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, e
 }
 
 // ValidateRules checks all rules for a field and returns errors for unknown/invalid rules
-func ValidateRules(field *FieldInfo, unknownTagMode string) error {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+func ValidateRules(field *FieldInfo, unknownTagMode string, typesInfo *types.Info) error {
+	typeInfo := ResolveTypeInfo(field.Type, typesInfo)
 
 	for _, rule := range field.Rules {
 		if unknownRule, ok := rule.(*UnknownRule); ok {

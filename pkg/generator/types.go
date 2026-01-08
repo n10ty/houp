@@ -134,7 +134,8 @@ type CodeGenContext struct {
 	Imports    map[string]string // import path -> alias
 	Buffer     []string          // lines of generated code
 	Options    *GenerateOptions
-	VarCounter int // counter for generating unique variable names
+	VarCounter int         // counter for generating unique variable names
+	TypesInfo  *types.Info // type information for resolving underlying types
 }
 
 // AddImport adds an import to the context and returns the alias to use

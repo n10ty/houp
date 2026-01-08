@@ -59,3 +59,21 @@ func (d *DateFormats) Validate() error {
 	}
 	return nil
 }
+
+func (c *CustomStringTypes) Validate() error {
+	// Timestamp: datetime=2006-01-02T15:04:05Z07:00
+	if _, err := time.Parse("2006-01-02T15:04:05Z07:00", string(c.Timestamp)); err != nil {
+		return fmt.Errorf("field Timestamp must be a valid datetime in format 2006-01-02T15:04:05Z07:00: %w", err)
+	}
+	// Date: datetime=2006-01-02
+	if _, err := time.Parse("2006-01-02", string(c.Date)); err != nil {
+		return fmt.Errorf("field Date must be a valid datetime in format 2006-01-02: %w", err)
+	}
+	// OptionalTs: omitempty,datetime=2006-01-02T15:04:05Z07:00
+	if c.OptionalTs != nil {
+		if _, err := time.Parse("2006-01-02T15:04:05Z07:00", string(*c.OptionalTs)); err != nil {
+			return fmt.Errorf("field OptionalTs must be a valid datetime in format 2006-01-02T15:04:05Z07:00: %w", err)
+		}
+	}
+	return nil
+}

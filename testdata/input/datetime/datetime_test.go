@@ -138,3 +138,68 @@ func TestDateFormatsValidation(t *testing.T) {
 func stringPtr(s string) *string {
 	return &s
 }
+
+func TestCustomStringTypesValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		cst     CustomStringTypes
+		wantErr bool
+	}{
+		{
+			name: "valid custom string types",
+			cst: CustomStringTypes{
+				Timestamp: "2024-01-15T09:00:00Z",
+				Date:      "2024-01-15",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid timestamp format",
+			cst: CustomStringTypes{
+				Timestamp: "2024-01-15",
+				Date:      "2024-01-15",
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid date format",
+			cst: CustomStringTypes{
+				Timestamp: "2024-01-15T09:00:00Z",
+				Date:      "01/15/2024",
+			},
+			wantErr: true,
+		},
+		{
+			name: "valid with optional pointer",
+			cst: CustomStringTypes{
+				Timestamp:  "2024-01-15T09:00:00Z",
+				Date:       "2024-01-15",
+				OptionalTs: metadataTimestampPtr("2024-01-16T10:00:00Z"),
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid optional pointer",
+			cst: CustomStringTypes{
+				Timestamp:  "2024-01-15T09:00:00Z",
+				Date:       "2024-01-15",
+				OptionalTs: metadataTimestampPtr("invalid"),
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cst.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CustomStringTypes.Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func metadataTimestampPtr(s string) *MetadataTimestamp {
+	ts := MetadataTimestamp(s)
+	return &ts
+}

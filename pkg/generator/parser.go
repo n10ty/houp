@@ -280,6 +280,18 @@ func ResolveTypeInfo(expr ast.Expr, typesInfo *types.Info) TypeInfo {
 		typeInfo.Name = t.Name
 		typeInfo.Kind = getTypeKind(t.Name)
 
+		// If it's an unknown type and we have type info, check the underlying type
+		if typeInfo.Kind == TypeUnknown && typesInfo != nil {
+			if obj := typesInfo.Uses[t]; obj != nil {
+				if typeName, ok := obj.(*types.TypeName); ok {
+					underlying := typeName.Type().Underlying()
+					if basic, ok := underlying.(*types.Basic); ok {
+						typeInfo.Kind = getTypeKindFromBasic(basic.Kind())
+					}
+				}
+			}
+		}
+
 	case *ast.StarExpr:
 		// Pointer type
 		typeInfo.IsPointer = true
@@ -360,6 +372,42 @@ func getTypeKind(name string) TypeKind {
 	case "float64":
 		return TypeFloat64
 	case "string":
+		return TypeString
+	default:
+		return TypeUnknown
+	}
+}
+
+// getTypeKindFromBasic converts types.BasicKind to TypeKind
+func getTypeKindFromBasic(kind types.BasicKind) TypeKind {
+	switch kind {
+	case types.Bool:
+		return TypeBool
+	case types.Int:
+		return TypeInt
+	case types.Int8:
+		return TypeInt8
+	case types.Int16:
+		return TypeInt16
+	case types.Int32:
+		return TypeInt32
+	case types.Int64:
+		return TypeInt64
+	case types.Uint:
+		return TypeUint
+	case types.Uint8:
+		return TypeUint8
+	case types.Uint16:
+		return TypeUint16
+	case types.Uint32:
+		return TypeUint32
+	case types.Uint64:
+		return TypeUint64
+	case types.Float32:
+		return TypeFloat32
+	case types.Float64:
+		return TypeFloat64
+	case types.String:
 		return TypeString
 	default:
 		return TypeUnknown

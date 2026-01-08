@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"go/types"
 	"strings"
 )
 
@@ -86,7 +87,7 @@ func generateValidateMethod(ctx *CodeGenContext) error {
 // generateFieldValidation generates validation code for a single field
 func generateFieldValidation(ctx *CodeGenContext, field *FieldInfo) error {
 	// Validate rules first
-	if err := ValidateRules(field, ctx.Options.UnknownTagMode); err != nil {
+	if err := ValidateRules(field, ctx.Options.UnknownTagMode, ctx.TypesInfo); err != nil {
 		if ctx.Options.UnknownTagMode == "skip" {
 			// Log warning and skip this field
 			fmt.Printf("Warning: struct '%s': %v\n", ctx.Struct.Name, err)
@@ -140,7 +141,7 @@ func generateFieldValidation(ctx *CodeGenContext, field *FieldInfo) error {
 
 // generateOmitEmptyWrapper wraps validations in an empty check
 func generateOmitEmptyWrapper(ctx *CodeGenContext, field *FieldInfo, rules []ValidationRule) error {
-	typeInfo := ResolveTypeInfo(field.Type, nil)
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
 
 	// Generate appropriate empty check based on type
@@ -192,7 +193,7 @@ func indentCode(code string, levels int) string {
 }
 
 // GenerateFileValidation generates validation code for all structs in a file
-func GenerateFileValidation(fileInfo *FileInfo, pkgName string, opts *GenerateOptions) (string, error) {
+func GenerateFileValidation(fileInfo *FileInfo, pkgName string, opts *GenerateOptions, typesInfo *types.Info) (string, error) {
 	// Collect all structs that need validation
 	var needsValidation []*StructInfo
 	for _, structInfo := range fileInfo.Structs {
@@ -212,10 +213,11 @@ func GenerateFileValidation(fileInfo *FileInfo, pkgName string, opts *GenerateOp
 	for _, structInfo := range needsValidation {
 		// Regenerate with a combined context
 		ctx := &CodeGenContext{
-			Struct:  structInfo,
-			Imports: allImports,
-			Buffer:  []string{},
-			Options: opts,
+			Struct:    structInfo,
+			Imports:   allImports,
+			Buffer:    []string{},
+			Options:   opts,
+			TypesInfo: typesInfo,
 		}
 
 		ctx.AddImport("fmt", "fmt")
