@@ -921,14 +921,12 @@ func (r *UUIDRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, erro
 		fieldRef = fmt.Sprintf("*%s", fieldRef)
 	}
 
-	// Use unique variable name to avoid redeclaration
-	ctx.VarCounter++
-	regexpVar := fmt.Sprintf("uuidRegexp%d", ctx.VarCounter)
+	// Get or create package-level regexp variable
+	regexpVar := ctx.AddRegexpVar(uuidPattern, "uuidRegexp")
 
-	return fmt.Sprintf(`	%s := regexp.MustCompile(%q)
-	if !%s.MatchString(%s) {
+	return fmt.Sprintf(`	if !%s.MatchString(%s) {
 		return fmt.Errorf("field %s must be a valid UUID")
-	}`, regexpVar, uuidPattern, regexpVar, fieldRef, field.Name), nil
+	}`, regexpVar, fieldRef, field.Name), nil
 }
 
 // ISO4217Rule validates that a string field is a valid ISO 4217 currency code
@@ -1055,9 +1053,8 @@ func (r *EmailRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, err
 	// Basic email regex pattern - intentionally broad
 	emailPattern := `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
 
-	// Use unique variable name to avoid redeclaration
-	ctx.VarCounter++
-	regexpVar := fmt.Sprintf("emailRegexp%d", ctx.VarCounter)
+	// Get or create package-level regexp variable
+	regexpVar := ctx.AddRegexpVar(emailPattern, "emailRegexp")
 
 	// Handle slice of strings
 	if typeInfo.IsSlice {
@@ -1069,25 +1066,23 @@ func (r *EmailRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, err
 
 		// Handle slice of pointer to strings
 		if elemType.IsPointer {
-			return fmt.Sprintf(`	%s := regexp.MustCompile(%q)
-	for i, email := range %s.%s {
+			return fmt.Sprintf(`	for i, email := range %s.%s {
 		if email == nil {
 			continue
 		}
 		if !%s.MatchString(*email) {
 			return fmt.Errorf("field %s[%%d] must be a valid email address", i)
 		}
-	}`, regexpVar, emailPattern, receiverVar, field.Name, regexpVar, field.Name), nil
+	}`, receiverVar, field.Name, regexpVar, field.Name), nil
 		}
 
 		// Handle slice of strings
 		if elemType.Kind == TypeString {
-			return fmt.Sprintf(`	%s := regexp.MustCompile(%q)
-	for i, email := range %s.%s {
+			return fmt.Sprintf(`	for i, email := range %s.%s {
 		if !%s.MatchString(email) {
 			return fmt.Errorf("field %s[%%d] must be a valid email address", i)
 		}
-	}`, regexpVar, emailPattern, receiverVar, field.Name, regexpVar, field.Name), nil
+	}`, receiverVar, field.Name, regexpVar, field.Name), nil
 		}
 
 		return "", fmt.Errorf("email validation only applicable to string types")
@@ -1110,10 +1105,9 @@ func (r *EmailRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, err
 		fieldRef = fmt.Sprintf("*%s", fieldRef)
 	}
 
-	return fmt.Sprintf(`	%s := regexp.MustCompile(%q)
-	if !%s.MatchString(%s) {
+	return fmt.Sprintf(`	if !%s.MatchString(%s) {
 		return fmt.Errorf("field %s must be a valid email address")
-	}`, regexpVar, emailPattern, regexpVar, fieldRef, field.Name), nil
+	}`, regexpVar, fieldRef, field.Name), nil
 }
 
 // ISO3166_1_Alpha2Rule validates that a string field is a valid ISO 3166-1 alpha-2 country code

@@ -1,8 +1,13 @@
 package generator
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"go/ast"
 	"go/types"
+	"path/filepath"
+	"strings"
 )
 
 // GenerateOptions contains configuration for the generator
@@ -131,12 +136,15 @@ func (t TypeInfo) IsFloat() bool {
 
 // CodeGenContext holds context for code generation
 type CodeGenContext struct {
-	Struct     *StructInfo
-	Imports    map[string]string // import path -> alias
-	Buffer     []string          // lines of generated code
-	Options    *GenerateOptions
-	VarCounter int         // counter for generating unique variable names
-	TypesInfo  *types.Info // type information for resolving underlying types
+	Struct       *StructInfo
+	Imports      map[string]string // import path -> alias
+	Buffer       []string          // lines of generated code
+	Options      *GenerateOptions
+	VarCounter   int               // counter for generating unique variable names
+	TypesInfo    *types.Info       // type information for resolving underlying types
+	RegexpVars   map[string]string // pattern -> variable name for package-level regexp vars
+	RegexpBuffer []string          // lines of package-level regexp variable declarations
+	FilePrefix   string            // prefix for file-unique variable names (e.g., sanitized filename)
 }
 
 // AddImport adds an import to the context and returns the alias to use
@@ -174,8 +182,81 @@ func (ctx *CodeGenContext) UniqueVarName(prefix string) string {
 	return prefix + string(rune('0'+ctx.VarCounter))
 }
 
+// AddRegexpVar adds a package-level regexp variable and returns its name.
+// If the pattern already exists, returns the existing variable name.
+// Uses a hash of the pattern and file prefix to ensure unique names across different generated files.
+func (ctx *CodeGenContext) AddRegexpVar(pattern, prefix string) string {
+	if ctx.RegexpVars == nil {
+		ctx.RegexpVars = make(map[string]string)
+	}
+
+	// Check if pattern already has a variable
+	if varName, exists := ctx.RegexpVars[pattern]; exists {
+		return varName
+	}
+
+	// Create a hash of the pattern for uniqueness
+	hash := sha256.Sum256([]byte(pattern))
+	hashStr := hex.EncodeToString(hash[:])[:8] // Use first 8 chars
+
+	// Create variable name with file prefix and hash suffix
+	var varName string
+	if ctx.FilePrefix != "" {
+		varName = fmt.Sprintf("%s_%s_%s", ctx.FilePrefix, prefix, hashStr)
+	} else {
+		varName = fmt.Sprintf("%s_%s", prefix, hashStr)
+	}
+
+	// Store mapping
+	ctx.RegexpVars[pattern] = varName
+
+	// Generate variable declaration
+	declaration := fmt.Sprintf("var %s = regexp.MustCompile(%q)", varName, pattern)
+	ctx.RegexpBuffer = append(ctx.RegexpBuffer, declaration)
+
+	return varName
+}
+
 // Import represents an import statement
 type Import struct {
 	Path  string
 	Alias string
+}
+
+// sanitizeFilenameForVar converts a filename to a valid Go variable prefix
+// e.g., "email_validation.go" -> "email"
+// e.g., "test-file.go" -> "testFile"
+func sanitizeFilenameForVar(filename string) string {
+	// Remove extension
+	base := filepath.Base(filename)
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+
+	// Remove common suffixes
+	name = strings.TrimSuffix(name, "_validation")
+	name = strings.TrimSuffix(name, "_validate")
+	name = strings.TrimSuffix(name, "_test")
+
+	// Replace non-alphanumeric characters with underscores
+	var result strings.Builder
+	for i, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			result.WriteRune(r)
+		} else if i > 0 { // Don't start with underscore
+			result.WriteRune('_')
+		}
+	}
+
+	prefix := result.String()
+
+	// Ensure it doesn't start with a number
+	if len(prefix) > 0 && prefix[0] >= '0' && prefix[0] <= '9' {
+		prefix = "file_" + prefix
+	}
+
+	// Use a default if empty
+	if prefix == "" {
+		prefix = "file"
+	}
+
+	return prefix
 }

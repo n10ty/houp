@@ -8,7 +8,7 @@ import (
 
 func main() {
 	fmt.Println("ValidGen Demo")
-	fmt.Println("=============\n")
+	fmt.Println("=============")
 
 	// Valid user
 	validUser := &demo.User{
@@ -27,7 +27,7 @@ func main() {
 	if err := validUser.Validate(); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	} else {
-		fmt.Println("✓ Valid user passed validation\n")
+		fmt.Println("✓ Valid user passed validation")
 	}
 
 	// Invalid user - missing required field

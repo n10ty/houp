@@ -11,10 +11,12 @@ import (
 // GenerateValidation generates validation code for a struct
 func GenerateValidation(structInfo *StructInfo, pkgName string, opts *GenerateOptions) (string, error) {
 	ctx := &CodeGenContext{
-		Struct:  structInfo,
-		Imports: make(map[string]string),
-		Buffer:  []string{},
-		Options: opts,
+		Struct:       structInfo,
+		Imports:      make(map[string]string),
+		Buffer:       []string{},
+		Options:      opts,
+		RegexpVars:   make(map[string]string),
+		RegexpBuffer: []string{},
 	}
 
 	// Always add fmt import for error messages
@@ -45,6 +47,15 @@ func GenerateValidation(structInfo *StructInfo, pkgName string, opts *GenerateOp
 			}
 		}
 		buf.WriteString(")\n\n")
+	}
+
+	// Package-level regexp variables
+	if len(ctx.RegexpBuffer) > 0 {
+		for _, decl := range ctx.RegexpBuffer {
+			buf.WriteString(decl)
+			buf.WriteString("\n")
+		}
+		buf.WriteString("\n")
 	}
 
 	// Generated code
@@ -206,18 +217,28 @@ func GenerateFileValidation(fileInfo *FileInfo, pkgName string, opts *GenerateOp
 		return "", nil // No validation needed for this file
 	}
 
-	// Combine all struct validations
+	// Create file prefix for unique regexp variable names
+	filePrefix := sanitizeFilenameForVar(fileInfo.Name)
+
+	// Combine all struct validations with shared context for regexp vars
 	allImports := make(map[string]string)
+	sharedRegexpVars := make(map[string]string)
+	var sharedRegexpBuffer []string
 	var allMethods []string
+	varCounter := 0
 
 	for _, structInfo := range needsValidation {
 		// Regenerate with a combined context
 		ctx := &CodeGenContext{
-			Struct:    structInfo,
-			Imports:   allImports,
-			Buffer:    []string{},
-			Options:   opts,
-			TypesInfo: typesInfo,
+			Struct:       structInfo,
+			Imports:      allImports,
+			Buffer:       []string{},
+			Options:      opts,
+			TypesInfo:    typesInfo,
+			VarCounter:   varCounter,
+			RegexpVars:   sharedRegexpVars,
+			RegexpBuffer: sharedRegexpBuffer,
+			FilePrefix:   filePrefix,
 		}
 
 		ctx.AddImport("fmt", "fmt")
@@ -225,6 +246,11 @@ func GenerateFileValidation(fileInfo *FileInfo, pkgName string, opts *GenerateOp
 		if err := generateValidateMethod(ctx); err != nil {
 			return "", err
 		}
+
+		// Update shared state
+		varCounter = ctx.VarCounter
+		sharedRegexpVars = ctx.RegexpVars
+		sharedRegexpBuffer = ctx.RegexpBuffer
 
 		// Merge imports
 		for path, alias := range ctx.Imports {
@@ -255,6 +281,15 @@ func GenerateFileValidation(fileInfo *FileInfo, pkgName string, opts *GenerateOp
 			}
 		}
 		buf.WriteString(")\n\n")
+	}
+
+	// Package-level regexp variables
+	if len(sharedRegexpBuffer) > 0 {
+		for _, decl := range sharedRegexpBuffer {
+			buf.WriteString(decl)
+			buf.WriteString("\n")
+		}
+		buf.WriteString("\n")
 	}
 
 	// Methods
