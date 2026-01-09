@@ -43,6 +43,10 @@ func TestGenerateUUID(t *testing.T) {
 	testGenerate(t, "uuid", "uuid.go")
 }
 
+func TestGenerateRequiredWithout(t *testing.T) {
+	testGenerate(t, "required_without", "penalty.go")
+}
+
 func testGenerate(t *testing.T, testDir, inputFile string) {
 	t.Helper()
 

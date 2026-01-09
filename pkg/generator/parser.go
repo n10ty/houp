@@ -200,6 +200,11 @@ func parseValidationRule(ruleStr string) (ValidationRule, error) {
 	switch ruleName {
 	case "required":
 		return &RequiredRule{}, nil
+	case "required_without":
+		if param == "" {
+			return nil, fmt.Errorf("required_without rule requires a field name parameter")
+		}
+		return &RequiredWithoutRule{OtherField: param}, nil
 	case "omitempty":
 		return &OmitEmptyRule{}, nil
 	case "min":

@@ -13,7 +13,7 @@ const version = "0.1.0"
 func main() {
 	// Define flags
 	var (
-		suffix         = flag.String("suffix", "_validate", "Suffix for generated files (e.g., '_validate' produces 'user_validate.go')")
+		suffix         = flag.String("suffix", "_validation.gen", "Suffix for generated files (e.g., '_validation.gen' produces 'user_validation.gen.go')")
 		overwrite      = flag.Bool("overwrite", true, "Overwrite existing generated files")
 		dryRun         = flag.Bool("dry-run", false, "Show what would be generated without writing files")
 		unknownTagMode = flag.String("unknown-tags", "fail", "How to handle unknown validation tags: 'fail' or 'skip'")
@@ -75,8 +75,8 @@ Usage:
 
 Options:
   --suffix string
-        Suffix for generated files (default "_validate")
-        Example: user.go -> user_validate.go
+        Suffix for generated files (default "_validation.gen")
+        Example: user.go -> user_validation.gen.go
 
   --overwrite
         Overwrite existing generated files (default true)
@@ -113,7 +113,7 @@ Examples:
   houp --unknown-tags=skip ./models
 
   # Use custom suffix for generated files
-  houp --suffix=_gen ./models
+  houp --suffix=_validate ./models
 
 Supported Validation Tags:
   required              Field must not be zero value

@@ -12,7 +12,7 @@ import (
 func Generate(pkgPath string, opts *GenerateOptions) error {
 	// Set defaults
 	if opts.Suffix == "" {
-		opts.Suffix = "_validate"
+		opts.Suffix = "_validation.gen"
 	}
 	if opts.UnknownTagMode == "" {
 		opts.UnknownTagMode = "fail"
@@ -107,7 +107,7 @@ func Generate(pkgPath string, opts *GenerateOptions) error {
 func GenerateForFiles(files []string, opts *GenerateOptions) error {
 	// Set defaults
 	if opts.Suffix == "" {
-		opts.Suffix = "_validate"
+		opts.Suffix = "_validation.gen"
 	}
 	if opts.UnknownTagMode == "" {
 		opts.UnknownTagMode = "fail"

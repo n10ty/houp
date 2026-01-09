@@ -61,6 +61,77 @@ func (r *RequiredRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, 
 	}
 }
 
+// RequiredWithoutRule validates that a field is not zero when another field is zero
+type RequiredWithoutRule struct {
+	OtherField string
+}
+
+func (r *RequiredWithoutRule) Name() string { return "required_without" }
+
+func (r *RequiredWithoutRule) Validate(fieldType TypeInfo) error {
+	// Can be applied to any type
+	return nil
+}
+
+func (r *RequiredWithoutRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
+	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
+
+	// Find the other field to get its type
+	var otherFieldInfo *FieldInfo
+	for _, f := range ctx.Struct.Fields {
+		if f.Name == r.OtherField {
+			otherFieldInfo = f
+			break
+		}
+	}
+
+	// If we can't find the other field in Fields, it might not have validation tags
+	// We need to check the struct definition anyway
+	var otherFieldTypeInfo TypeInfo
+	if otherFieldInfo != nil {
+		otherFieldTypeInfo = ResolveTypeInfo(otherFieldInfo.Type, ctx.TypesInfo)
+	} else {
+		// Default to assuming pointer type (common for optional fields)
+		otherFieldTypeInfo = TypeInfo{IsPointer: true}
+	}
+
+	// Generate condition to check if other field is zero/empty
+	var otherFieldIsEmpty string
+	if otherFieldTypeInfo.IsPointer {
+		otherFieldIsEmpty = fmt.Sprintf("%s.%s == nil", receiverVar, r.OtherField)
+	} else if otherFieldTypeInfo.IsSlice {
+		otherFieldIsEmpty = fmt.Sprintf("(%s.%s == nil || len(%s.%s) == 0)", receiverVar, r.OtherField, receiverVar, r.OtherField)
+	} else if otherFieldTypeInfo.Kind == TypeString {
+		otherFieldIsEmpty = fmt.Sprintf("%s.%s == \"\"", receiverVar, r.OtherField)
+	} else if otherFieldTypeInfo.IsNumeric() {
+		otherFieldIsEmpty = fmt.Sprintf("%s.%s == 0", receiverVar, r.OtherField)
+	} else {
+		// For unknown types, assume pointer
+		otherFieldIsEmpty = fmt.Sprintf("%s.%s == nil", receiverVar, r.OtherField)
+	}
+
+	// Generate condition to check if current field is zero/empty
+	var currentFieldIsEmpty string
+	if typeInfo.IsPointer {
+		currentFieldIsEmpty = fmt.Sprintf("%s.%s == nil", receiverVar, field.Name)
+	} else if typeInfo.IsSlice {
+		currentFieldIsEmpty = fmt.Sprintf("(%s.%s == nil || len(%s.%s) == 0)", receiverVar, field.Name, receiverVar, field.Name)
+	} else if typeInfo.Kind == TypeString {
+		currentFieldIsEmpty = fmt.Sprintf("%s.%s == \"\"", receiverVar, field.Name)
+	} else if typeInfo.IsNumeric() {
+		currentFieldIsEmpty = fmt.Sprintf("%s.%s == 0", receiverVar, field.Name)
+	} else {
+		// For unknown types, skip validation
+		return fmt.Sprintf("\t// field %s: required_without validation not implemented for this type", field.Name), nil
+	}
+
+	// Generate validation: if other field is empty, then this field is required
+	return fmt.Sprintf(`	if %s && %s {
+		return fmt.Errorf("field %s is required when %s is not provided")
+	}`, otherFieldIsEmpty, currentFieldIsEmpty, field.Name, r.OtherField), nil
+}
+
 // OmitEmptyRule wraps other validations to skip if field is empty
 type OmitEmptyRule struct{}
 
