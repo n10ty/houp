@@ -206,7 +206,7 @@ func TestParseValidationRules(t *testing.T) {
 		{
 			name:    "complex combination",
 			tag:     "required,min=1,dive,unique=ID",
-			wantLen: 4,
+			wantLen: 3, // required, min=1, dive (with unique=ID as element rule)
 		},
 	}
 

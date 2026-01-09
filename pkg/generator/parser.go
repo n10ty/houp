@@ -88,6 +88,11 @@ func ParsePackage(pkgPath string) (*PackageInfo, error) {
 		pkgInfo.Files[fileInfo.Name] = fileInfo
 	}
 
+	// Discover structs referenced by 'dive' tags and mark them for generation
+	// This ensures that structs without validation tags but referenced by dive
+	// will get empty Validate() methods generated
+	discoverAndMarkDiveStructs(pkgInfo)
+
 	return pkgInfo, nil
 }
 
@@ -170,6 +175,53 @@ func parseValidationRules(validateTag string) ([]ValidationRule, error) {
 	parts := strings.Split(validateTag, ",")
 	rules := make([]ValidationRule, 0, len(parts))
 
+	// Find the index of 'dive' if present
+	diveIndex := -1
+	for i, part := range parts {
+		if strings.TrimSpace(part) == "dive" {
+			diveIndex = i
+			break
+		}
+	}
+
+	// If dive is found, split rules into pre-dive and post-dive
+	if diveIndex >= 0 {
+		// Parse pre-dive rules
+		for i := 0; i < diveIndex; i++ {
+			part := strings.TrimSpace(parts[i])
+			if part == "" {
+				continue
+			}
+
+			rule, err := parseValidationRule(part)
+			if err != nil {
+				return nil, err
+			}
+			rules = append(rules, rule)
+		}
+
+		// Parse post-dive rules (rules that apply to each element)
+		var elementRules []ValidationRule
+		for i := diveIndex + 1; i < len(parts); i++ {
+			part := strings.TrimSpace(parts[i])
+			if part == "" {
+				continue
+			}
+
+			rule, err := parseValidationRule(part)
+			if err != nil {
+				return nil, err
+			}
+			elementRules = append(elementRules, rule)
+		}
+
+		// Add the dive rule with element rules
+		rules = append(rules, &DiveRule{ElementRules: elementRules})
+
+		return rules, nil
+	}
+
+	// No dive tag, parse all rules normally
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
@@ -473,4 +525,56 @@ func ParseFile(filename string) (*FileInfo, error) {
 	})
 
 	return fileInfo, nil
+}
+
+// discoverAndMarkDiveStructs finds all structs referenced by 'dive' tags
+// and marks them as NeedsGen even if they don't have their own validation tags.
+// This ensures empty Validate() methods are generated for them.
+func discoverAndMarkDiveStructs(pkgInfo *PackageInfo) {
+	// Build a map of all struct names to StructInfo
+	allStructs := make(map[string]*StructInfo)
+	for _, fileInfo := range pkgInfo.Files {
+		for _, structInfo := range fileInfo.Structs {
+			allStructs[structInfo.Name] = structInfo
+		}
+	}
+
+	// Find all structs referenced by dive tags
+	referencedStructs := make(map[string]bool)
+	for _, fileInfo := range pkgInfo.Files {
+		for _, structInfo := range fileInfo.Structs {
+			for _, field := range structInfo.Fields {
+				for _, rule := range field.Rules {
+					if _, ok := rule.(*DiveRule); ok {
+						// Extract type name from field
+						typeInfo := ResolveTypeInfo(field.Type, pkgInfo.TypesInfo)
+
+						var typeName string
+						if typeInfo.IsPointer && typeInfo.Elem != nil {
+							typeName = typeInfo.Elem.Name
+						} else if typeInfo.IsSlice && typeInfo.Elem != nil {
+							if typeInfo.Elem.IsPointer && typeInfo.Elem.Elem != nil {
+								typeName = typeInfo.Elem.Elem.Name
+							} else {
+								typeName = typeInfo.Elem.Name
+							}
+						} else {
+							typeName = typeInfo.Name
+						}
+
+						if typeName != "" {
+							referencedStructs[typeName] = true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Mark referenced structs as needing generation
+	for typeName := range referencedStructs {
+		if structInfo, exists := allStructs[typeName]; exists {
+			structInfo.NeedsGen = true
+		}
+	}
 }

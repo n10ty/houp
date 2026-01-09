@@ -665,7 +665,11 @@ func (r *UniqueRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, er
 }
 
 // DiveRule validates nested structures
-type DiveRule struct{}
+type DiveRule struct {
+	// ElementRules are validation rules to apply to each element
+	// These are the rules that come AFTER the dive tag
+	ElementRules []ValidationRule
+}
 
 func (r *DiveRule) Name() string { return "dive" }
 
@@ -685,6 +689,29 @@ func (r *DiveRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, erro
 
 		elemType := *typeInfo.Elem
 
+		// Check if element is a struct type (or pointer to struct)
+		isStructElem := false
+		if elemType.IsPointer && elemType.Elem != nil {
+			isStructElem = elemType.Elem.Kind == TypeStruct || elemType.Elem.Kind == TypeUnknown
+		} else {
+			isStructElem = elemType.Kind == TypeStruct || elemType.Kind == TypeUnknown
+		}
+
+		// If we have element-specific validation rules AND element is primitive
+		if len(r.ElementRules) > 0 && !isStructElem {
+			// Generate validation for primitive slice elements with custom rules
+			return r.generateSliceElementValidation(ctx, field, elemType, receiverVar)
+		}
+
+		// For struct elements, we need to:
+		// 1. Call .Validate() on each element
+		// 2. Apply any element rules (like unique) that work on the struct level
+		if len(r.ElementRules) > 0 && isStructElem {
+			// Generate both Validate() calls and struct-level rules like unique
+			return r.generateStructSliceValidation(ctx, field, elemType, receiverVar)
+		}
+
+		// No element rules - just call Validate() on struct elements
 		// Handle slice of pointers vs values
 		if elemType.IsPointer {
 			return fmt.Sprintf(`	for i := range %s.%s {
@@ -717,6 +744,111 @@ func (r *DiveRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, erro
 	return fmt.Sprintf(`	if err := %s.%s.Validate(); err != nil {
 		return fmt.Errorf("field %s validation failed: %%w", err)
 	}`, receiverVar, field.Name, field.Name), nil
+}
+
+// generateStructSliceValidation handles dive on slice of structs with additional element rules
+func (r *DiveRule) generateStructSliceValidation(ctx *CodeGenContext, field *FieldInfo, elemType TypeInfo, receiverVar string) (string, error) {
+	var code strings.Builder
+
+	// First, call Validate() on each element
+	if elemType.IsPointer {
+		code.WriteString(fmt.Sprintf(`	for i := range %s.%s {
+		if %s.%s[i] == nil {
+			continue
+		}
+		if err := %s.%s[i].Validate(); err != nil {
+			return fmt.Errorf("field %s[%%d] validation failed: %%w", i, err)
+		}
+	}`, receiverVar, field.Name, receiverVar, field.Name, receiverVar, field.Name, field.Name))
+	} else {
+		code.WriteString(fmt.Sprintf(`	for i := range %s.%s {
+		if err := %s.%s[i].Validate(); err != nil {
+			return fmt.Errorf("field %s[%%d] validation failed: %%w", i, err)
+		}
+	}`, receiverVar, field.Name, receiverVar, field.Name, field.Name))
+	}
+
+	// Now apply struct-level rules (like unique)
+	for _, rule := range r.ElementRules {
+		ruleCode, err := rule.Generate(ctx, field)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate dive element rule %s: %w", rule.Name(), err)
+		}
+
+		if ruleCode != "" {
+			code.WriteString("\n")
+			code.WriteString(ruleCode)
+		}
+	}
+
+	return code.String(), nil
+}
+
+// generateSliceElementValidation generates validation code for slice elements with custom rules
+func (r *DiveRule) generateSliceElementValidation(ctx *CodeGenContext, field *FieldInfo, elemType TypeInfo, receiverVar string) (string, error) {
+	// Create a temporary FieldInfo for the element
+	// This allows us to reuse existing rule generation logic
+	elemField := &FieldInfo{
+		Name:  "elem",
+		Type:  elemType.UnderlyingGo,
+		Rules: r.ElementRules,
+	}
+
+	// Generate validation code for all element rules first to see if we have any valid code
+	var validationLines []string
+	for _, rule := range r.ElementRules {
+		// Generate the rule code
+		ruleCode, err := rule.Generate(ctx, elemField)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate dive element rule %s: %w", rule.Name(), err)
+		}
+
+		if ruleCode != "" {
+			// Fix up the generated code to work in the loop context
+			// 1. Replace receiver.elem with just elem (the loop variable)
+			ruleCode = strings.ReplaceAll(ruleCode, receiverVar+".elem", "elem")
+
+			// 2. Update error messages to include array index
+			ruleCode = strings.ReplaceAll(ruleCode, `"field elem`, fmt.Sprintf(`"field %s[%%d]`, field.Name))
+
+			// 3. Add index parameter to fmt.Errorf calls
+			// Only replace the closing ) in fmt.Errorf lines
+			lines := strings.Split(strings.TrimSpace(ruleCode), "\n")
+			var fixedLines []string
+			for _, line := range lines {
+				if strings.Contains(line, "fmt.Errorf") && !strings.Contains(line, ", i)") {
+					// Add ", i" before the last ")"
+					lastParen := strings.LastIndex(line, ")")
+					if lastParen > 0 {
+						line = line[:lastParen] + ", i" + line[lastParen:]
+					}
+				}
+				fixedLines = append(fixedLines, line)
+			}
+			validationLines = append(validationLines, fixedLines...)
+		}
+	}
+
+	// If no validation code was generated, don't create an empty loop
+	if len(validationLines) == 0 {
+		return "", nil
+	}
+
+	var code strings.Builder
+
+	// Start loop
+	code.WriteString(fmt.Sprintf("\tfor i, elem := range %s.%s {\n", receiverVar, field.Name))
+
+	// Add validation lines
+	for _, line := range validationLines {
+		code.WriteString("\t\t")
+		code.WriteString(line)
+		code.WriteString("\n")
+	}
+
+	code.WriteString("\t}")
+
+	return code.String(), nil
 }
 
 // CustomRule calls a custom validation function
@@ -896,6 +1028,16 @@ func (r *EmailRule) Validate(fieldType TypeInfo) error {
 		return nil
 	}
 
+	// Handle slice of strings
+	if fieldType.IsSlice && fieldType.Elem != nil && fieldType.Elem.Kind == TypeString {
+		return nil
+	}
+
+	// Handle slice of pointer to strings
+	if fieldType.IsSlice && fieldType.Elem != nil && fieldType.Elem.IsPointer && fieldType.Elem.Elem != nil && fieldType.Elem.Elem.Kind == TypeString {
+		return nil
+	}
+
 	if fieldType.Kind != TypeString {
 		return fmt.Errorf("email validation only applicable to string types")
 	}
@@ -904,6 +1046,52 @@ func (r *EmailRule) Validate(fieldType TypeInfo) error {
 
 func (r *EmailRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
 	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
+
+	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
+
+	// Add regexp package import
+	ctx.AddImport("regexp", "regexp")
+
+	// Basic email regex pattern - intentionally broad
+	emailPattern := `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
+
+	// Use unique variable name to avoid redeclaration
+	ctx.VarCounter++
+	regexpVar := fmt.Sprintf("emailRegexp%d", ctx.VarCounter)
+
+	// Handle slice of strings
+	if typeInfo.IsSlice {
+		if typeInfo.Elem == nil {
+			return "", fmt.Errorf("cannot validate slice: element type unknown")
+		}
+
+		elemType := *typeInfo.Elem
+
+		// Handle slice of pointer to strings
+		if elemType.IsPointer {
+			return fmt.Sprintf(`	%s := regexp.MustCompile(%q)
+	for i, email := range %s.%s {
+		if email == nil {
+			continue
+		}
+		if !%s.MatchString(*email) {
+			return fmt.Errorf("field %s[%%d] must be a valid email address", i)
+		}
+	}`, regexpVar, emailPattern, receiverVar, field.Name, regexpVar, field.Name), nil
+		}
+
+		// Handle slice of strings
+		if elemType.Kind == TypeString {
+			return fmt.Sprintf(`	%s := regexp.MustCompile(%q)
+	for i, email := range %s.%s {
+		if !%s.MatchString(email) {
+			return fmt.Errorf("field %s[%%d] must be a valid email address", i)
+		}
+	}`, regexpVar, emailPattern, receiverVar, field.Name, regexpVar, field.Name), nil
+		}
+
+		return "", fmt.Errorf("email validation only applicable to string types")
+	}
 
 	// Skip non-string types
 	if typeInfo.Kind != TypeString {
@@ -915,24 +1103,12 @@ func (r *EmailRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, err
 		}
 	}
 
-	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
-
-	// Add regexp package import
-	ctx.AddImport("regexp", "regexp")
-
 	fieldRef := fmt.Sprintf("%s.%s", receiverVar, field.Name)
-
-	// Basic email regex pattern - intentionally broad
-	emailPattern := `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
 
 	if typeInfo.IsPointer {
 		// For pointer to string, dereference
 		fieldRef = fmt.Sprintf("*%s", fieldRef)
 	}
-
-	// Use unique variable name to avoid redeclaration
-	ctx.VarCounter++
-	regexpVar := fmt.Sprintf("emailRegexp%d", ctx.VarCounter)
 
 	return fmt.Sprintf(`	%s := regexp.MustCompile(%q)
 	if !%s.MatchString(%s) {
