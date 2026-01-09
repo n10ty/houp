@@ -33,7 +33,8 @@ type GenerateOptions struct {
 // PackageInfo represents a parsed Go package
 type PackageInfo struct {
 	Name      string
-	Path      string
+	Path      string               // file system path
+	PkgPath   string               // Go import path
 	Files     map[string]*FileInfo // filename -> FileInfo
 	TypesInfo *types.Info
 }
@@ -44,15 +45,18 @@ type FileInfo struct {
 	Path    string
 	AST     *ast.File
 	Structs []*StructInfo
+	Skip    bool // true if file has //validate:skip comment
 }
 
 // StructInfo represents a struct with validation requirements
 type StructInfo struct {
-	Name       string
-	TypeSpec   *ast.TypeSpec
-	Fields     []*FieldInfo
-	NeedsGen   bool // true if any field has validation tags
-	SourceFile string
+	Name             string
+	TypeSpec         *ast.TypeSpec
+	Fields           []*FieldInfo
+	NeedsGen         bool // true if any field has validation tags
+	SourceFile       string
+	CustomValidators []CustomValidator // struct-level custom validators from //validate: comments
+	Skip             bool              // true if struct has //validate:skip comment
 }
 
 // FieldInfo represents a struct field with validation metadata
@@ -145,6 +149,7 @@ type CodeGenContext struct {
 	RegexpVars   map[string]string // pattern -> variable name for package-level regexp vars
 	RegexpBuffer []string          // lines of package-level regexp variable declarations
 	FilePrefix   string            // prefix for file-unique variable names (e.g., sanitized filename)
+	PkgPath      string            // current package import path
 }
 
 // AddImport adds an import to the context and returns the alias to use
@@ -221,6 +226,12 @@ func (ctx *CodeGenContext) AddRegexpVar(pattern, prefix string) string {
 type Import struct {
 	Path  string
 	Alias string
+}
+
+// CustomValidator represents a struct-level custom validator function
+type CustomValidator struct {
+	ImportPath string // e.g., "github.com/a/b"
+	FuncName   string // e.g., "ValidateUser"
 }
 
 // sanitizeFilenameForVar converts a filename to a valid Go variable prefix

@@ -66,11 +66,13 @@ func ParsePackage(pkgPath string) (*PackageInfo, error) {
 	pkgInfo := &PackageInfo{
 		Name:      pkg.Name,
 		Path:      pkgPath,
+		PkgPath:   pkg.PkgPath,
 		Files:     make(map[string]*FileInfo),
 		TypesInfo: pkg.TypesInfo,
 	}
 
 	// Parse each file
+	fset := token.NewFileSet()
 	for i, astFile := range pkg.Syntax {
 		var filename string
 		if i < len(pkg.GoFiles) {
@@ -82,32 +84,70 @@ func ParsePackage(pkgPath string) (*PackageInfo, error) {
 			filename = pkg.Fset.File(astFile.Pos()).Name()
 		}
 
+		// Re-parse the file with ParseComments to ensure we get doc comments
+		astFileWithComments, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
+		if err != nil {
+			// If re-parsing fails, use the original AST (without comments)
+			astFileWithComments = astFile
+		}
+
 		fileInfo := &FileInfo{
 			Name:    filepath.Base(filename),
 			Path:    filename,
-			AST:     astFile,
+			AST:     astFileWithComments,
 			Structs: []*StructInfo{},
+			Skip:    hasFileSkipAnnotation(astFileWithComments),
 		}
 
 		// Extract structs from this file
-		ast.Inspect(astFile, func(n ast.Node) bool {
-			typeSpec, ok := n.(*ast.TypeSpec)
-			if !ok {
-				return true
+		// Use file.Decls directly to preserve Doc comments
+		// First, collect all type declaration positions for skip annotation detection
+		var typeGenDeclPositions []token.Pos
+		for _, decl := range astFileWithComments.Decls {
+			genDecl, ok := decl.(*ast.GenDecl)
+			if ok && genDecl.Tok == token.TYPE {
+				typeGenDeclPositions = append(typeGenDeclPositions, genDecl.Pos())
+			}
+		}
+
+		declIndex := 0
+		for _, decl := range astFileWithComments.Decls {
+			genDecl, ok := decl.(*ast.GenDecl)
+			if !ok || genDecl.Tok != token.TYPE {
+				continue
 			}
 
-			structType, ok := typeSpec.Type.(*ast.StructType)
-			if !ok {
-				return true
-			}
+			for _, spec := range genDecl.Specs {
+				typeSpec, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
 
-			structInfo := parseStruct(typeSpec, structType, filename, pkg.TypesInfo)
-			if structInfo != nil {
-				fileInfo.Structs = append(fileInfo.Structs, structInfo)
-			}
+				structType, ok := typeSpec.Type.(*ast.StructType)
+				if !ok {
+					continue
+				}
 
-			return true
-		})
+				// Doc comments can be on either GenDecl or TypeSpec
+				// If there's only one spec in the GenDecl, the comment is on GenDecl
+				// If there are multiple specs, each TypeSpec has its own Doc
+				if typeSpec.Doc == nil && len(genDecl.Specs) == 1 {
+					typeSpec.Doc = genDecl.Doc
+				}
+
+				// Determine the range to check for skip annotations
+				var prevDeclPos token.Pos = 0
+				if declIndex > 0 {
+					prevDeclPos = typeGenDeclPositions[declIndex-1]
+				}
+
+				structInfo := parseStruct(typeSpec, structType, filename, pkg.TypesInfo, genDecl, astFileWithComments.Comments, prevDeclPos)
+				if structInfo != nil {
+					fileInfo.Structs = append(fileInfo.Structs, structInfo)
+				}
+			}
+			declIndex++
+		}
 
 		pkgInfo.Files[fileInfo.Name] = fileInfo
 	}
@@ -126,13 +166,33 @@ func ParsePackage(pkgPath string) (*PackageInfo, error) {
 }
 
 // parseStruct extracts struct information including fields and validation tags
-func parseStruct(typeSpec *ast.TypeSpec, structType *ast.StructType, filename string, typesInfo *types.Info) *StructInfo {
+func parseStruct(typeSpec *ast.TypeSpec, structType *ast.StructType, filename string, typesInfo *types.Info, genDecl *ast.GenDecl, fileComments []*ast.CommentGroup, prevDeclPos token.Pos) *StructInfo {
 	structInfo := &StructInfo{
-		Name:       typeSpec.Name.Name,
-		TypeSpec:   typeSpec,
-		Fields:     []*FieldInfo{},
-		NeedsGen:   false,
-		SourceFile: filepath.Base(filename),
+		Name:             typeSpec.Name.Name,
+		TypeSpec:         typeSpec,
+		Fields:           []*FieldInfo{},
+		NeedsGen:         false,
+		SourceFile:       filepath.Base(filename),
+		CustomValidators: []CustomValidator{},
+		Skip:             hasStructSkipAnnotation(typeSpec, genDecl, fileComments, prevDeclPos),
+	}
+
+	// Parse struct-level validation comments
+	if typeSpec.Doc != nil {
+		for _, comment := range typeSpec.Doc.List {
+			text := strings.TrimSpace(strings.TrimPrefix(comment.Text, "//"))
+			// Look for //validate:pkg/path:FuncName
+			if strings.HasPrefix(text, "validate:") {
+				validatorStr := strings.TrimPrefix(text, "validate:")
+				validatorStr = strings.TrimSpace(validatorStr)
+
+				// Parse the validator: should be in format pkg/path:FuncName
+				if validator, err := parseStructValidator(validatorStr); err == nil {
+					structInfo.CustomValidators = append(structInfo.CustomValidators, validator)
+					structInfo.NeedsGen = true
+				}
+			}
+		}
 	}
 
 	if structType.Fields == nil {
@@ -366,6 +426,32 @@ func parseCustomRule(ruleStr string) (ValidationRule, error) {
 	}, nil
 }
 
+// parseStructValidator parses struct-level validator in two formats:
+// 1. pkg/path:FuncName - for validators in external packages
+// 2. FuncName - for validators in the same package (no import needed)
+func parseStructValidator(validatorStr string) (CustomValidator, error) {
+	// Check if it contains a colon (indicating package:function format)
+	if strings.Contains(validatorStr, ":") {
+		// Format: pkg/path:FuncName
+		parts := strings.SplitN(validatorStr, ":", 2)
+		if len(parts) != 2 {
+			return CustomValidator{}, fmt.Errorf("struct validator must be in format pkg/path:FuncName or just FuncName, got: %s", validatorStr)
+		}
+
+		return CustomValidator{
+			ImportPath: parts[0],
+			FuncName:   parts[1],
+		}, nil
+	}
+
+	// Format: FuncName (same package)
+	// Use empty string as ImportPath to indicate same package
+	return CustomValidator{
+		ImportPath: "",
+		FuncName:   validatorStr,
+	}, nil
+}
+
 // ResolveTypeInfo resolves type information from an AST expression
 func ResolveTypeInfo(expr ast.Expr, typesInfo *types.Info) TypeInfo {
 	typeInfo := TypeInfo{
@@ -536,27 +622,55 @@ func ParseFile(filename string) (*FileInfo, error) {
 		Path:    filename,
 		AST:     astFile,
 		Structs: []*StructInfo{},
+		Skip:    hasFileSkipAnnotation(astFile),
 	}
 
-	// Extract structs
-	ast.Inspect(astFile, func(n ast.Node) bool {
-		typeSpec, ok := n.(*ast.TypeSpec)
-		if !ok {
-			return true
+	// Extract structs - use file.Decls to get GenDecl for skip annotation detection
+	// First, collect all type declaration positions
+	var typeGenDeclPositions []token.Pos
+	for _, decl := range astFile.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if ok && genDecl.Tok != token.TYPE {
+			typeGenDeclPositions = append(typeGenDeclPositions, genDecl.Pos())
+		}
+	}
+
+	declIndex := 0
+	for _, decl := range astFile.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.TYPE {
+			continue
 		}
 
-		structType, ok := typeSpec.Type.(*ast.StructType)
-		if !ok {
-			return true
-		}
+		for _, spec := range genDecl.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				continue
+			}
 
-		structInfo := parseStruct(typeSpec, structType, filename, nil)
-		if structInfo != nil {
-			fileInfo.Structs = append(fileInfo.Structs, structInfo)
-		}
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			if !ok {
+				continue
+			}
 
-		return true
-	})
+			// Doc comments can be on either GenDecl or TypeSpec
+			if typeSpec.Doc == nil && len(genDecl.Specs) == 1 {
+				typeSpec.Doc = genDecl.Doc
+			}
+
+			// Determine the range to check for skip annotations
+			var prevDeclPos token.Pos = 0
+			if declIndex > 0 {
+				prevDeclPos = typeGenDeclPositions[declIndex-1]
+			}
+
+			structInfo := parseStruct(typeSpec, structType, filename, nil, genDecl, astFile.Comments, prevDeclPos)
+			if structInfo != nil {
+				fileInfo.Structs = append(fileInfo.Structs, structInfo)
+			}
+		}
+		declIndex++
+	}
 
 	return fileInfo, nil
 }
@@ -611,4 +725,78 @@ func discoverAndMarkDiveStructs(pkgInfo *PackageInfo) {
 			structInfo.NeedsGen = true
 		}
 	}
+}
+
+// hasFileSkipAnnotation checks if a file has //validate:skip annotation in the package comments
+func hasFileSkipAnnotation(file *ast.File) bool {
+	// Check File.Doc first (comments directly attached to package declaration)
+	if file.Doc != nil {
+		for _, comment := range file.Doc.List {
+			text := strings.TrimSpace(strings.TrimPrefix(comment.Text, "//"))
+			if text == "validate:skip" {
+				return true
+			}
+		}
+	}
+
+	// Also check all comments in the file that appear before the package declaration
+	// These would be in File.Comments but not File.Doc
+	if file.Comments != nil {
+		for _, commentGroup := range file.Comments {
+			// Only check comments that appear before the package declaration
+			if commentGroup.Pos() < file.Package {
+				for _, comment := range commentGroup.List {
+					text := strings.TrimSpace(strings.TrimPrefix(comment.Text, "//"))
+					if text == "validate:skip" {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// hasStructSkipAnnotation checks if a struct has //validate:skip annotation in its doc comments
+func hasStructSkipAnnotation(typeSpec *ast.TypeSpec, genDecl *ast.GenDecl, fileComments []*ast.CommentGroup, prevDeclPos token.Pos) bool {
+	// Check TypeSpec.Doc first
+	if typeSpec.Doc != nil {
+		for _, comment := range typeSpec.Doc.List {
+			text := strings.TrimSpace(strings.TrimPrefix(comment.Text, "//"))
+			if text == "validate:skip" {
+				return true
+			}
+		}
+	}
+
+	// If there's only one spec in GenDecl, also check GenDecl.Doc
+	if len(genDecl.Specs) == 1 && genDecl.Doc != nil {
+		for _, comment := range genDecl.Doc.List {
+			text := strings.TrimSpace(strings.TrimPrefix(comment.Text, "//"))
+			if text == "validate:skip" {
+				return true
+			}
+		}
+	}
+
+	// Check all comment groups that appear between the previous declaration and this one
+	// This handles cases where //validate:skip is separated by blank lines from the struct
+	if fileComments != nil {
+		genDeclPos := genDecl.Pos()
+
+		// Find any comment group between prevDeclPos and genDeclPos that contains //validate:skip
+		for _, commentGroup := range fileComments {
+			if commentGroup.Pos() > prevDeclPos && commentGroup.End() < genDeclPos {
+				for _, comment := range commentGroup.List {
+					text := strings.TrimSpace(strings.TrimPrefix(comment.Text, "//"))
+					if text == "validate:skip" {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
 }

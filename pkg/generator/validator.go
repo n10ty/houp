@@ -1336,12 +1336,17 @@ type DateTimeRule struct {
 func (r *DateTimeRule) Name() string { return "datetime" }
 
 func (r *DateTimeRule) Validate(fieldType TypeInfo) error {
-	// Handle pointer to string
-	if fieldType.IsPointer && fieldType.Elem != nil && fieldType.Elem.Kind == TypeString {
-		return nil
+	// Handle pointer to string or custom string type
+	if fieldType.IsPointer && fieldType.Elem != nil {
+		// Check if element is string or string-based
+		if fieldType.Elem.Kind == TypeString || fieldType.Elem.Kind == TypeUnknown {
+			return nil
+		}
+		return fmt.Errorf("datetime validation only applicable to string types")
 	}
 
-	if fieldType.Kind != TypeString {
+	// Handle direct string or custom string types (which have Kind == TypeString after resolution)
+	if fieldType.Kind != TypeString && fieldType.Kind != TypeUnknown {
 		return fmt.Errorf("datetime validation only applicable to string types")
 	}
 	return nil
@@ -1350,14 +1355,15 @@ func (r *DateTimeRule) Validate(fieldType TypeInfo) error {
 func (r *DateTimeRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
 	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
 
-	// Skip non-string types
-	if typeInfo.Kind != TypeString {
-		if typeInfo.IsPointer && typeInfo.Elem != nil && typeInfo.Elem.Kind != TypeString {
-			return "", fmt.Errorf("datetime validation only applicable to string types")
-		}
-		if !typeInfo.IsPointer {
-			return "", fmt.Errorf("datetime validation only applicable to string types")
-		}
+	// Check if this is a valid type for datetime validation
+	// Valid types: string, custom string types (TypeUnknown with string underlying), pointer to either
+	isValidType := typeInfo.Kind == TypeString || typeInfo.Kind == TypeUnknown
+	if typeInfo.IsPointer && typeInfo.Elem != nil {
+		isValidType = typeInfo.Elem.Kind == TypeString || typeInfo.Elem.Kind == TypeUnknown
+	}
+
+	if !isValidType {
+		return "", fmt.Errorf("datetime validation only applicable to string types")
 	}
 
 	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))

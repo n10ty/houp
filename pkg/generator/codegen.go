@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/format"
 	"go/types"
+	"path/filepath"
 	"strings"
 )
 
@@ -80,6 +81,13 @@ func generateValidateMethod(ctx *CodeGenContext) error {
 
 	// Method signature
 	ctx.Buffer = append(ctx.Buffer, fmt.Sprintf("func (%s *%s) Validate() error {", receiverVar, ctx.Struct.Name))
+
+	// Generate struct-level custom validator calls first
+	for _, validator := range ctx.Struct.CustomValidators {
+		if err := generateStructValidatorCall(ctx, validator, receiverVar, ctx.PkgPath); err != nil {
+			return fmt.Errorf("failed to generate struct-level validator %s: %w", validator.FuncName, err)
+		}
+	}
 
 	// Generate validation code for each field
 	for _, field := range ctx.Struct.Fields {
@@ -203,11 +211,47 @@ func indentCode(code string, levels int) string {
 	return strings.Join(lines, "\n")
 }
 
+// generateStructValidatorCall generates a call to a struct-level custom validator
+func generateStructValidatorCall(ctx *CodeGenContext, validator CustomValidator, receiverVar string, currentPkgPath string) error {
+	var funcQualifier string
+
+	// Check if the validator is in the same package
+	// Empty ImportPath means same package (new format: just FuncName)
+	// Or ImportPath matches current package path
+	if validator.ImportPath == "" || validator.ImportPath == currentPkgPath {
+		// Same package - call function directly without package qualifier
+		funcQualifier = ""
+	} else {
+		// Different package - add import and use package qualifier
+		pkgAlias := ctx.AddImport(validator.ImportPath, filepath.Base(validator.ImportPath))
+		funcQualifier = pkgAlias + "."
+	}
+
+	// Generate the validator call
+	// The validator function receives the entire struct as a pointer
+	validatorCall := fmt.Sprintf("\tif err := %s%s(%s); err != nil {", funcQualifier, validator.FuncName, receiverVar)
+	ctx.Buffer = append(ctx.Buffer, validatorCall)
+	ctx.Buffer = append(ctx.Buffer, fmt.Sprintf("\t\treturn fmt.Errorf(\"struct validation failed: %%w\", err)"))
+	ctx.Buffer = append(ctx.Buffer, "\t}")
+
+	return nil
+}
+
 // GenerateFileValidation generates validation code for all structs in a file
-func GenerateFileValidation(fileInfo *FileInfo, pkgName string, opts *GenerateOptions, typesInfo *types.Info) (string, error) {
+func GenerateFileValidation(fileInfo *FileInfo, pkgName string, opts *GenerateOptions, typesInfo *types.Info, pkgPath string) (string, error) {
+	// Skip files marked with //validate:skip
+	if fileInfo.Skip {
+		return "", nil
+	}
+
 	// Collect all structs that need validation
 	var needsValidation []*StructInfo
 	for _, structInfo := range fileInfo.Structs {
+		// Skip structs marked with //validate:skip
+		if structInfo.Skip {
+			continue
+		}
+
 		if structInfo.NeedsGen {
 			needsValidation = append(needsValidation, structInfo)
 		}
@@ -239,6 +283,7 @@ func GenerateFileValidation(fileInfo *FileInfo, pkgName string, opts *GenerateOp
 			RegexpVars:   sharedRegexpVars,
 			RegexpBuffer: sharedRegexpBuffer,
 			FilePrefix:   filePrefix,
+			PkgPath:      pkgPath,
 		}
 
 		ctx.AddImport("fmt", "fmt")
@@ -320,6 +365,11 @@ func GeneratePackageValidation(pkgInfo *PackageInfo, opts *GenerateOptions) (str
 	// Collect all structs that need validation from all files
 	var needsValidation []*StructInfo
 	for _, fileInfo := range pkgInfo.Files {
+		// Skip files marked with //validate:skip
+		if fileInfo.Skip {
+			continue
+		}
+
 		// Skip test files
 		if strings.HasSuffix(fileInfo.Name, "_test.go") {
 			continue
@@ -331,6 +381,11 @@ func GeneratePackageValidation(pkgInfo *PackageInfo, opts *GenerateOptions) (str
 		}
 
 		for _, structInfo := range fileInfo.Structs {
+			// Skip structs marked with //validate:skip
+			if structInfo.Skip {
+				continue
+			}
+
 			if structInfo.NeedsGen {
 				needsValidation = append(needsValidation, structInfo)
 			}
@@ -363,6 +418,7 @@ func GeneratePackageValidation(pkgInfo *PackageInfo, opts *GenerateOptions) (str
 			RegexpVars:   sharedRegexpVars,
 			RegexpBuffer: sharedRegexpBuffer,
 			FilePrefix:   filePrefix,
+			PkgPath:      pkgInfo.PkgPath,
 		}
 
 		ctx.AddImport("fmt", "fmt")

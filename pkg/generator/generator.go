@@ -90,9 +90,20 @@ func GenerateForFiles(files []string, opts *GenerateOptions) error {
 			return fmt.Errorf("failed to parse file %s: %w", filePath, err)
 		}
 
+		// Skip files marked with //validate:skip
+		if fileInfo.Skip {
+			fmt.Printf("Skipping %s (marked with //validate:skip)\n", filePath)
+			continue
+		}
+
 		// Check if file has structs needing validation
 		hasValidation := false
 		for _, structInfo := range fileInfo.Structs {
+			// Skip structs marked with //validate:skip
+			if structInfo.Skip {
+				continue
+			}
+
 			if structInfo.NeedsGen {
 				hasValidation = true
 				break
@@ -108,7 +119,7 @@ func GenerateForFiles(files []string, opts *GenerateOptions) error {
 		pkgName := fileInfo.AST.Name.Name
 
 		// Generate validation code
-		code, err := GenerateFileValidation(fileInfo, pkgName, opts, nil)
+		code, err := GenerateFileValidation(fileInfo, pkgName, opts, nil, "")
 		if err != nil {
 			return fmt.Errorf("failed to generate validation for file %s (package %s): %w", filePath, pkgName, err)
 		}
