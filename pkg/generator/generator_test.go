@@ -47,13 +47,17 @@ func TestGenerateRequiredWithout(t *testing.T) {
 	testGenerate(t, "required_without", "penalty.go")
 }
 
+func TestGenerateEqField(t *testing.T) {
+	testGenerate(t, "eqfield", "request.go")
+}
+
 func testGenerate(t *testing.T, testDir, inputFile string) {
 	t.Helper()
 
 	// Paths
 	inputPath := filepath.Join("../../testdata/input", testDir)
-	goldenPath := filepath.Join("../../testdata/golden", testDir,
-		inputFile[:len(inputFile)-3]+"_validate.go")
+	// Now all validation is in a single validation.gen.go file per package
+	goldenPath := filepath.Join("../../testdata/golden", testDir, "validation.gen.go")
 
 	// Generate options
 	opts := &GenerateOptions{
@@ -68,8 +72,8 @@ func testGenerate(t *testing.T, testDir, inputFile string) {
 		t.Fatalf("Generate() failed: %v", err)
 	}
 
-	// Read generated file
-	generatedPath := filepath.Join(inputPath, inputFile[:len(inputFile)-3]+"_validate.go")
+	// Read generated file (now always validation.gen.go)
+	generatedPath := filepath.Join(inputPath, "validation.gen.go")
 	generated, err := ioutil.ReadFile(generatedPath)
 	if err != nil {
 		t.Fatalf("failed to read generated file: %v", err)
@@ -92,6 +96,16 @@ type TestStruct struct {
 `
 	if err := ioutil.WriteFile(testFile, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	// Create a minimal go.mod for the temp package
+	goMod := filepath.Join(tmpDir, "go.mod")
+	modContent := `module test
+
+go 1.20
+`
+	if err := ioutil.WriteFile(goMod, []byte(modContent), 0644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
 	}
 
 	opts := &GenerateOptions{
@@ -124,6 +138,16 @@ type TestStruct struct {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
+	// Create a minimal go.mod for the temp package
+	goMod := filepath.Join(tmpDir, "go.mod")
+	modContent := `module test
+
+go 1.20
+`
+	if err := ioutil.WriteFile(goMod, []byte(modContent), 0644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+
 	opts := &GenerateOptions{
 		Suffix:         "_validate",
 		Overwrite:      true,
@@ -131,13 +155,13 @@ type TestStruct struct {
 		UnknownTagMode: "skip",
 	}
 
-	// Should succeed and skip unknown tag using GenerateForFiles
-	if err := GenerateForFiles([]string{testFile}, opts); err != nil {
-		t.Fatalf("GenerateForFiles() with skip mode failed: %v", err)
+	// Should succeed and skip unknown tag using Generate
+	if err := Generate(tmpDir, opts); err != nil {
+		t.Fatalf("Generate() with skip mode failed: %v", err)
 	}
 
 	// Verify generated file exists
-	genFile := filepath.Join(tmpDir, "test_validate.go")
+	genFile := filepath.Join(tmpDir, "validation.gen.go")
 	generated, err := ioutil.ReadFile(genFile)
 	if err != nil {
 		t.Fatalf("failed to read generated file: %v", err)

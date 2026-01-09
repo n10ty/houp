@@ -61,6 +61,88 @@ func (r *RequiredRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, 
 	}
 }
 
+// EqFieldRule validates that a field equals another field
+type EqFieldRule struct {
+	OtherField string
+}
+
+func (r *EqFieldRule) Name() string { return "eqfield" }
+
+func (r *EqFieldRule) Validate(fieldType TypeInfo) error {
+	// Can be applied to any comparable type
+	return nil
+}
+
+func (r *EqFieldRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, error) {
+	typeInfo := ResolveTypeInfo(field.Type, ctx.TypesInfo)
+	receiverVar := strings.ToLower(string(ctx.Struct.Name[0]))
+
+	// Find the other field to get its type
+	var otherFieldInfo *FieldInfo
+	for _, f := range ctx.Struct.Fields {
+		if f.Name == r.OtherField {
+			otherFieldInfo = f
+			break
+		}
+	}
+
+	// If we can't find the other field in Fields, it might not have validation tags
+	// We need to check the struct definition anyway
+	var otherFieldTypeInfo TypeInfo
+	if otherFieldInfo != nil {
+		otherFieldTypeInfo = ResolveTypeInfo(otherFieldInfo.Type, ctx.TypesInfo)
+	} else {
+		// We'll try to compare anyway - compilation will catch type mismatches
+		otherFieldTypeInfo = typeInfo
+	}
+
+	// Build field references
+	fieldRef := fmt.Sprintf("%s.%s", receiverVar, field.Name)
+	otherFieldRef := fmt.Sprintf("%s.%s", receiverVar, r.OtherField)
+
+	// Handle pointer types - need to compare dereferenced values
+	if typeInfo.IsPointer && otherFieldTypeInfo.IsPointer {
+		// Both pointers - check if both non-nil and equal, or handle nil mismatch
+		return fmt.Sprintf(`	if %s != nil && %s != nil {
+		if *%s != *%s {
+			return fmt.Errorf("field %s must equal field %s")
+		}
+	} else if (%s == nil) != (%s == nil) {
+		return fmt.Errorf("field %s must equal field %s")
+	}`, fieldRef, otherFieldRef, fieldRef, otherFieldRef, field.Name, r.OtherField,
+			fieldRef, otherFieldRef, field.Name, r.OtherField), nil
+	}
+
+	if typeInfo.IsPointer && !otherFieldTypeInfo.IsPointer {
+		// Current field is pointer, other is not
+		return fmt.Sprintf(`	if %s != nil {
+		if *%s != %s {
+			return fmt.Errorf("field %s must equal field %s")
+		}
+	} else {
+		return fmt.Errorf("field %s must equal field %s (pointer is nil)")
+	}`, fieldRef, fieldRef, otherFieldRef, field.Name, r.OtherField,
+			field.Name, r.OtherField), nil
+	}
+
+	if !typeInfo.IsPointer && otherFieldTypeInfo.IsPointer {
+		// Other field is pointer, current is not
+		return fmt.Sprintf(`	if %s != nil {
+		if %s != *%s {
+			return fmt.Errorf("field %s must equal field %s")
+		}
+	} else {
+		return fmt.Errorf("field %s must equal field %s (comparison field is nil)")
+	}`, otherFieldRef, fieldRef, otherFieldRef, field.Name, r.OtherField,
+			field.Name, r.OtherField), nil
+	}
+
+	// Neither is a pointer - simple comparison
+	return fmt.Sprintf(`	if %s != %s {
+		return fmt.Errorf("field %s must equal field %s")
+	}`, fieldRef, otherFieldRef, field.Name, r.OtherField), nil
+}
+
 // RequiredWithoutRule validates that a field is not zero when another field is zero
 type RequiredWithoutRule struct {
 	OtherField string
@@ -703,12 +785,20 @@ func (r *DiveRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, erro
 			return r.generateSliceElementValidation(ctx, field, elemType, receiverVar)
 		}
 
+		// Check if element type is from an external package
+		isExternalType := r.isExternalType(elemType)
+
 		// For struct elements, we need to:
 		// 1. Call .Validate() on each element
 		// 2. Apply any element rules (like unique) that work on the struct level
 		if len(r.ElementRules) > 0 && isStructElem {
 			// Generate both Validate() calls and struct-level rules like unique
-			return r.generateStructSliceValidation(ctx, field, elemType, receiverVar)
+			return r.generateStructSliceValidation(ctx, field, elemType, receiverVar, isExternalType)
+		}
+
+		// Skip generating Validate() calls for external types without validation tags
+		if isExternalType {
+			return fmt.Sprintf("\t// Skipping dive validation for external type without validation tags"), nil
 		}
 
 		// No element rules - just call Validate() on struct elements
@@ -731,6 +821,14 @@ func (r *DiveRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, erro
 	}`, receiverVar, field.Name, receiverVar, field.Name, field.Name), nil
 	}
 
+	// Check if type is from an external package
+	isExternalType := r.isExternalType(typeInfo)
+
+	// Skip generating Validate() calls for external types
+	if isExternalType {
+		return fmt.Sprintf("\t// Skipping dive validation for external type without validation tags"), nil
+	}
+
 	if typeInfo.IsPointer {
 		// Dive into pointer to struct
 		return fmt.Sprintf(`	if %s.%s != nil {
@@ -746,13 +844,29 @@ func (r *DiveRule) Generate(ctx *CodeGenContext, field *FieldInfo) (string, erro
 	}`, receiverVar, field.Name, field.Name), nil
 }
 
+// isExternalType checks if a type is from an external package
+func (r *DiveRule) isExternalType(typeInfo TypeInfo) bool {
+	// Check if the type has a package path (indicating it's from another package)
+	if typeInfo.PkgPath != "" {
+		return true
+	}
+
+	// For pointer types, check the underlying element type
+	if typeInfo.IsPointer && typeInfo.Elem != nil {
+		return r.isExternalType(*typeInfo.Elem)
+	}
+
+	return false
+}
+
 // generateStructSliceValidation handles dive on slice of structs with additional element rules
-func (r *DiveRule) generateStructSliceValidation(ctx *CodeGenContext, field *FieldInfo, elemType TypeInfo, receiverVar string) (string, error) {
+func (r *DiveRule) generateStructSliceValidation(ctx *CodeGenContext, field *FieldInfo, elemType TypeInfo, receiverVar string, isExternalType bool) (string, error) {
 	var code strings.Builder
 
-	// First, call Validate() on each element
-	if elemType.IsPointer {
-		code.WriteString(fmt.Sprintf(`	for i := range %s.%s {
+	// Only call Validate() on each element if it's not an external type
+	if !isExternalType {
+		if elemType.IsPointer {
+			code.WriteString(fmt.Sprintf(`	for i := range %s.%s {
 		if %s.%s[i] == nil {
 			continue
 		}
@@ -760,12 +874,16 @@ func (r *DiveRule) generateStructSliceValidation(ctx *CodeGenContext, field *Fie
 			return fmt.Errorf("field %s[%%d] validation failed: %%w", i, err)
 		}
 	}`, receiverVar, field.Name, receiverVar, field.Name, receiverVar, field.Name, field.Name))
-	} else {
-		code.WriteString(fmt.Sprintf(`	for i := range %s.%s {
+		} else {
+			code.WriteString(fmt.Sprintf(`	for i := range %s.%s {
 		if err := %s.%s[i].Validate(); err != nil {
 			return fmt.Errorf("field %s[%%d] validation failed: %%w", i, err)
 		}
 	}`, receiverVar, field.Name, receiverVar, field.Name, field.Name))
+		}
+	} else {
+		// Add a comment indicating we're skipping validation for external types
+		code.WriteString(fmt.Sprintf("\t// Skipping Validate() call for external type %s in field %s\n", elemType.Name, field.Name))
 	}
 
 	// Now apply struct-level rules (like unique)

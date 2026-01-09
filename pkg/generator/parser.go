@@ -19,9 +19,11 @@ func ParsePackage(pkgPath string) (*PackageInfo, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
 			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
+		Dir: pkgPath,
 	}
 
-	pkgs, err := packages.Load(cfg, pkgPath)
+	// Use pattern "." to load the package in the current directory
+	pkgs, err := packages.Load(cfg, ".")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load package: %w", err)
 	}
@@ -35,8 +37,30 @@ func ParsePackage(pkgPath string) (*PackageInfo, error) {
 	}
 
 	pkg := pkgs[0]
+	// Allow type errors during generation - this is expected when generating for the first time
+	// Only fail on syntax errors
 	if len(pkg.Errors) > 0 {
-		return nil, fmt.Errorf("package has errors: %v", pkg.Errors)
+		// Check if all errors are type errors (which is ok during initial generation)
+		hasNonTypeErrors := false
+		for _, err := range pkg.Errors {
+			// Type errors typically contain phrases like "undefined", "has no field or method"
+			// Syntax errors contain phrases like "syntax error", "expected", etc.
+			// Module errors contain "outside main module" which can be ignored
+			// Go version errors contain "requires newer Go version" which can be ignored
+			errStr := err.Error()
+			if !strings.Contains(errStr, "undefined") &&
+				!strings.Contains(errStr, "has no field or method") &&
+				!strings.Contains(errStr, "not used") &&
+				!strings.Contains(errStr, "outside main module") &&
+				!strings.Contains(errStr, "requires newer Go version") {
+				hasNonTypeErrors = true
+				break
+			}
+		}
+		if hasNonTypeErrors {
+			return nil, fmt.Errorf("package has errors: %v", pkg.Errors)
+		}
+		// Continue with type errors - they'll be fixed after generation
 	}
 
 	pkgInfo := &PackageInfo{
@@ -86,6 +110,11 @@ func ParsePackage(pkgPath string) (*PackageInfo, error) {
 		})
 
 		pkgInfo.Files[fileInfo.Name] = fileInfo
+	}
+
+	// Check if we actually found any files
+	if len(pkgInfo.Files) == 0 {
+		return nil, fmt.Errorf("no Go files found in package %s", pkgPath)
 	}
 
 	// Discover structs referenced by 'dive' tags and mark them for generation
@@ -257,6 +286,11 @@ func parseValidationRule(ruleStr string) (ValidationRule, error) {
 			return nil, fmt.Errorf("required_without rule requires a field name parameter")
 		}
 		return &RequiredWithoutRule{OtherField: param}, nil
+	case "eqfield":
+		if param == "" {
+			return nil, fmt.Errorf("eqfield rule requires a field name parameter")
+		}
+		return &EqFieldRule{OtherField: param}, nil
 	case "omitempty":
 		return &OmitEmptyRule{}, nil
 	case "min":

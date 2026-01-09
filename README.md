@@ -104,6 +104,8 @@ if err := user.Validate(); err != nil {
 | Tag | Description | Applicable Types | Example |
 |-----|-------------|------------------|---------|
 | `required` | Field must not be zero value | All types | `validate:"required"` |
+| `required_without=Field` | Field required when other field is empty | All types | `validate:"required_without=OtherField"` |
+| `eqfield=Field` | Field must equal another field | Comparable types | `validate:"eqfield=Password"` |
 | `omitempty` | Skip validation if field is empty | All types | `validate:"omitempty,min=5"` |
 | `min=N` | Minimum value/length | Numbers, strings, slices | `validate:"min=1"` |
 | `max=N` | Maximum value/length | Numbers, strings, slices | `validate:"max=100"` |
@@ -113,6 +115,8 @@ if err := user.Validate(); err != nil {
 | `lte=N` | Less than or equal | Numbers | `validate:"lte=100"` |
 | `uuid` | Valid UUID (v1-v5) format | Strings | `validate:"uuid"` |
 | `iso4217` | Valid ISO 4217 currency code | Strings | `validate:"iso4217"` |
+| `email` | Valid email address | Strings | `validate:"email"` |
+| `iso3166_1_alpha2` | Valid ISO 3166-1 alpha-2 country code | Strings | `validate:"iso3166_1_alpha2"` |
 | `datetime=format` | Valid datetime in Go format | Strings | `validate:"datetime=2006-01-02"` |
 | `regexp=pkg:Var` | Match imported regexp | Strings | `validate:"regexp=github.com/x/y:Pattern"` |
 | `unique` | Values must be unique | Slices | `validate:"unique"` |
@@ -383,6 +387,48 @@ Common formats:
 - Date only: `2006-01-02`
 - Time only: `15:04:05`
 - Custom: `01/02/2006`
+
+### Field Equality Validation
+
+Validate that a field equals another field (useful for password confirmation, order cancellation, etc.):
+
+```go
+type UserRegistration struct {
+    Password        string `validate:"required,min=8"`
+    ConfirmPassword string `validate:"required,eqfield=Password"`
+}
+
+type OrderCancellation struct {
+    // CancelOrderId must equal OrderId to confirm cancellation
+    CancelOrderId *string `validate:"omitempty,eqfield=OrderId"`
+    OrderId       string  `validate:"required"`
+}
+```
+
+**Generated code:**
+
+```go
+func (u *UserRegistration) Validate() error {
+    if u.Password == "" {
+        return fmt.Errorf("field Password is required")
+    }
+    if len(u.Password) < 8 {
+        return fmt.Errorf("field Password must be at least 8 characters")
+    }
+    if u.ConfirmPassword == "" {
+        return fmt.Errorf("field ConfirmPassword is required")
+    }
+    if u.ConfirmPassword != u.Password {
+        return fmt.Errorf("field ConfirmPassword must equal field Password")
+    }
+    return nil
+}
+```
+
+**Works with:**
+- Non-pointer fields: Direct value comparison
+- Pointer fields: Handles nil checks and dereferences for comparison
+- Mixed pointer/non-pointer: Compares dereferenced value with non-pointer value
 
 ### Custom Validators
 

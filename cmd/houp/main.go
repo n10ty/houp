@@ -13,7 +13,7 @@ const version = "0.1.0"
 func main() {
 	// Define flags
 	var (
-		suffix         = flag.String("suffix", "_validation.gen", "Suffix for generated files (e.g., '_validation.gen' produces 'user_validation.gen.go')")
+		suffix         = flag.String("suffix", "_validation.gen", "Suffix for the generated validation file (generates validation.gen.go)")
 		overwrite      = flag.Bool("overwrite", true, "Overwrite existing generated files")
 		dryRun         = flag.Bool("dry-run", false, "Show what would be generated without writing files")
 		unknownTagMode = flag.String("unknown-tags", "fail", "How to handle unknown validation tags: 'fail' or 'skip'")
@@ -41,15 +41,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Get package path from args
+	// Get package paths from args
 	args := flag.Args()
 	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: no package path specified\n\n")
 		usage()
 		os.Exit(1)
 	}
-
-	pkgPath := args[0]
 
 	// Create options
 	opts := &generator.GenerateOptions{
@@ -60,9 +58,16 @@ func main() {
 		MultiError:     *multiError,
 	}
 
-	// Run generator
-	if err := generator.Generate(pkgPath, opts); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	// Run generator for each package path
+	hasErrors := false
+	for _, pkgPath := range args {
+		if err := generator.Generate(pkgPath, opts); err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating validation for %s: %v\n", pkgPath, err)
+			hasErrors = true
+		}
+	}
+
+	if hasErrors {
 		os.Exit(1)
 	}
 }
@@ -71,12 +76,12 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `houp - Static validation generator for Go structs
 
 Usage:
-  houp [options] <package-path>
+  houp [options] <package-path> [package-path...]
 
 Options:
   --suffix string
-        Suffix for generated files (default "_validation.gen")
-        Example: user.go -> user_validation.gen.go
+        Suffix for generated file (default "_validation.gen")
+        Note: Generates a single validation.gen.go file per package
 
   --overwrite
         Overwrite existing generated files (default true)
@@ -103,8 +108,11 @@ Examples:
   # Show version
   houp --version
 
-  # Generate validation for a package
+  # Generate validation for a package (creates validation.gen.go)
   houp ./models
+
+  # Generate validation for multiple packages
+  houp ./models ./api ./services
 
   # Dry run to see what would be generated
   houp --dry-run ./models
@@ -112,8 +120,16 @@ Examples:
   # Skip unknown validation tags instead of failing
   houp --unknown-tags=skip ./models
 
-  # Use custom suffix for generated files
+  # Use custom suffix for generated file
   houp --suffix=_validate ./models
+
+  # Generate for multiple packages with options
+  houp --dry-run --unknown-tags=skip ./models ./api
+
+Output:
+  Generates a single validation.gen.go file per package containing all
+  Validate() methods for structs with validation tags. This consolidates
+  all validation code in one place, avoiding multiple files.
 
 Supported Validation Tags:
   required              Field must not be zero value

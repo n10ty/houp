@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Generate processes a Go package and generates validation code
+// Generate processes a Go package and generates validation code in a single validation.gen.go file
 func Generate(pkgPath string, opts *GenerateOptions) error {
 	// Set defaults
 	if opts.Suffix == "" {
@@ -28,78 +28,48 @@ func Generate(pkgPath string, opts *GenerateOptions) error {
 		return fmt.Errorf("no Go files found in package %s", pkgPath)
 	}
 
-	// Track if we generated any files
-	generated := 0
-
-	// Process each file
-	for _, fileInfo := range pkgInfo.Files {
-		// Skip test files
-		if strings.HasSuffix(fileInfo.Name, "_test.go") {
-			continue
-		}
-
-		// Skip already generated files
-		if strings.HasSuffix(fileInfo.Name, opts.Suffix+".go") {
-			continue
-		}
-
-		// Check if file has any structs needing validation
-		hasValidation := false
-		for _, structInfo := range fileInfo.Structs {
-			if structInfo.NeedsGen {
-				hasValidation = true
-				break
-			}
-		}
-
-		if !hasValidation {
-			continue
-		}
-
-		// Generate validation code
-		code, err := GenerateFileValidation(fileInfo, pkgInfo.Name, opts, pkgInfo.TypesInfo)
-		if err != nil {
-			return fmt.Errorf("failed to generate validation for file %s (package %s): %w", fileInfo.Name, pkgInfo.Name, err)
-		}
-
-		if code == "" {
-			continue
-		}
-
-		// Determine output filename
-		baseName := strings.TrimSuffix(fileInfo.Name, ".go")
-		outputName := baseName + opts.Suffix + ".go"
-		outputPath := filepath.Join(filepath.Dir(fileInfo.Path), outputName)
-
-		// Check if file exists and we shouldn't overwrite
-		if !opts.Overwrite {
-			if _, err := os.Stat(outputPath); err == nil {
-				fmt.Printf("Skipping %s (already exists, use --overwrite to replace)\n", outputPath)
-				continue
-			}
-		}
-
-		// Dry run mode
-		if opts.DryRun {
-			fmt.Printf("Would generate: %s\n", outputPath)
-			continue
-		}
-
-		// Write generated code
-		if err := ioutil.WriteFile(outputPath, []byte(code), 0644); err != nil {
-			return fmt.Errorf("failed to write file %s: %w", outputPath, err)
-		}
-
-		fmt.Printf("Generated: %s\n", outputPath)
-		generated++
+	// Generate validation code for the entire package
+	code, err := GeneratePackageValidation(pkgInfo, opts)
+	if err != nil {
+		return fmt.Errorf("failed to generate validation for package %s: %w", pkgInfo.Name, err)
 	}
 
-	if generated == 0 {
+	if code == "" {
 		fmt.Println("No validation code generated (no structs with validation tags found)")
-	} else {
-		fmt.Printf("Successfully generated %d validation file(s)\n", generated)
+		return nil
 	}
 
+	// Determine output filename: validation.gen.go in the package directory
+	// Get the directory from any file in the package
+	var pkgDir string
+	for _, fileInfo := range pkgInfo.Files {
+		pkgDir = filepath.Dir(fileInfo.Path)
+		break
+	}
+
+	outputName := "validation.gen.go"
+	outputPath := filepath.Join(pkgDir, outputName)
+
+	// Check if file exists and we shouldn't overwrite
+	if !opts.Overwrite {
+		if _, err := os.Stat(outputPath); err == nil {
+			fmt.Printf("Skipping %s (already exists, use --overwrite to replace)\n", outputPath)
+			return nil
+		}
+	}
+
+	// Dry run mode
+	if opts.DryRun {
+		fmt.Printf("Would generate: %s\n", outputPath)
+		return nil
+	}
+
+	// Write generated code
+	if err := ioutil.WriteFile(outputPath, []byte(code), 0644); err != nil {
+		return fmt.Errorf("failed to write file %s: %w", outputPath, err)
+	}
+
+	fmt.Printf("Generated: %s\n", outputPath)
 	return nil
 }
 
